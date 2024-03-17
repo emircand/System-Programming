@@ -116,33 +116,26 @@ int main(int argc, char *argv[]) {
         }
         createGradesFile(fileName);
         printf("File %s created successfully.\n", fileName);
-    } else if (strcmp(command, "addStudentGrade") == 0) {
-        if (argc != 4) {
-            fprintf(stderr, "Usage: %s addStudentGrade <student_name> <grade>\n", argv[0]);
-            exit(EXIT_FAILURE);
+    }
+    char input[MAX_COMMAND_LENGTH];
+    while (1) {
+        printf("\nEnter command: ");
+        fgets(input, sizeof(input), stdin);
+
+        // Remove trailing newline if present
+        input[strcspn(input, "\n")] = 0;
+
+        if (strncmp(input, "addStudentGrade ", strlen("addStudentGrade ")) == 0) {
+            char studentName[50], grade[3];
+            if (sscanf(input, "addStudentGrade \"%MAX_NAME_LENGTH[^\"]\" \"%MAX_GRADE_LENGTH[^\"]\"", studentName, grade) == 2) {
+                addStudentGrade(studentName, grade);
+                printf("Student grade added successfully.\n");
+            } else {
+                printf("Invalid command format.\n");
+            }
+        } else {
+            printf("Invalid command. Please use 'addStudentGrade \"Name Surname\" \"AA\"'.\n");
         }
-        addStudentGrade(argv[2], argv[3]);
-    } else if (strcmp(command, "searchStudent") == 0) {
-        if (argc != 3) {
-            fprintf(stderr, "Usage: %s searchStudent <student_name>\n", argv[0]);
-            exit(EXIT_FAILURE);
-        }
-        searchStudent(argv[2]);
-    } else if (strcmp(command, "sortAll") == 0) {
-        if (argc != 4) {
-            fprintf(stderr, "Usage: %s sortAll <filename> <sortOption> <sortOrder>\n", argv[0]);
-            exit(EXIT_FAILURE);
-        }
-        sortStudentGrades(argv[2], atoi(argv[3]), atoi(argv[4]));
-    } else if (strcmp(command, "showAll") == 0) {
-        if (argc != 3) {
-            fprintf(stderr, "Usage: %s showAll <filename>\n", argv[0]);
-            exit(EXIT_FAILURE);
-        }
-        displayStudentGrades(argv[2]);
-    } else {
-        fprintf(stderr, "Invalid command. Use 'gtuStudentGrades' to see usage.\n");
-        exit(EXIT_FAILURE);
     }
 
     return 0;
