@@ -169,81 +169,70 @@ void logging(const char *message) {
 
 
 void displayUsage() {
-    // Implement displayUsage function here
+    printf("Usage: ./program_name <command> [<arguments>]\n");
+    printf("Available commands:\n");
+    printf("  gtuStudentGrades <filename>\n");
+    printf("  addStudentGrade <studentName> <grade>\n");
+    printf("  searchStudent <studentName>\n");
+}
+
+
+int executeTask(const char *command, char *args[]) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork failed");
+        return -1;
+    } else if (pid == 0) {
+        // Child process
+        execvp(command, args);
+        perror("execvp failed");
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process
+        int status;
+        waitpid(pid, &status, 0);
+        return WEXITSTATUS(status);
+    }
 }
 
 int main(int argc, char *argv[]) {
-
-    if (argc == 1) {
-        displayUsage();
+    if (argc < 2) {
+        displayUsage(argv[0]);
         return 0;
     }
 
     char *command = argv[1];
-    char *fileName;
-    if (argc > 2)
-        fileName = argv[2];
 
     if (strcmp(command, "gtuStudentGrades") == 0) {
-        if (argc != 3) {
+        if(argc == 2){
+            displayUsage();
+            exit(EXIT_SUCCESS);
+        } else if (argc != 3) {
             fprintf(stderr, "Usage: %s gtuStudentGrades <filename>\n", argv[0]);
             exit(EXIT_FAILURE);
         }
-
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork failed");
+        createGradesFile(argv[2]);
+        logging("File created successfully.\n");
+    } else if (strcmp(command, "addStudentGrade") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "Usage: %s addStudentGrade <studentName> <grade>\n", argv[0]);
             exit(EXIT_FAILURE);
-        } else if (pid == 0) {
-            // Child process
-            createGradesFile(fileName);
-            logging("File created successfully.\n");
-            exit(EXIT_SUCCESS);
-        } else {
-            // Parent process
-            int status;
-            waitpid(pid, &status, 0);
         }
+
+        addStudentGrade(argv[2], argv[3]);
+        logging("Student grade added successfully.\n");
+    } else if (strcmp(command, "searchStudent") == 0) {
+        if (argc != 3) {
+            fprintf(stderr, "Usage: %s searchStudent <studentName>\n", argv[0]);
+            exit(EXIT_FAILURE);
+        }
+
+        searchStudent(argv[2]);
+        logging("Student search done successfully.\n");
+    } else {
+        displayUsage();
     }
 
-    char input[MAX_COMMAND_LENGTH];
-    while (1) {
-        printf("\nEnter command: ");
-        fgets(input, sizeof(input), stdin);
-
-        // Remove trailing newline if present
-        input[strcspn(input, "\n")] = 0;
-
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork failed");
-            exit(EXIT_FAILURE);
-        } else if (pid == 0) {
-            // Child process
-            if (strncmp(input, "addStudentGrade ", strlen("addStudentGrade ")) == 0) {
-                char studentName[MAX_NAME_LENGTH];
-                char grade[MAX_GRADE_LENGTH];
-                if (sscanf(input, "addStudentGrade \"%49[^\"]\" \"%2[^\"]\"", studentName, grade) == 2) {
-                    addStudentGrade(studentName, grade);
-                    logging("Student grade added successfully.\n");
-                } else {
-                    logging("Invalid command. Please use 'addStudentGrade \"Name Surname\" \"AA\"'.\n");
-                }
-            } else if (strncmp(input, "searchStudent ", strlen("searchStudent ")) == 0) {
-                char studentName[MAX_NAME_LENGTH];
-                if (sscanf(input, "searchStudent \"%49[^\"]\"", studentName) == 1) {
-                    searchStudent(studentName);
-                    logging("Student Search done successfully.\n");
-                } else {
-                    logging("Invalid command. Please use 'searchStudent \"Name Surname\"\n");
-                }
-            }
-            exit(EXIT_SUCCESS);
-        } else {
-            // Parent process
-            int status;
-            waitpid(pid, &status, 0);
-        }
-    }
     return 0;
 }
+
