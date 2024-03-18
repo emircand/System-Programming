@@ -11,3 +11,35 @@ Student Search done successfully.
 Student search done successfully.
 File created successfully.
 File created successfully.
+File created successfully.
+Student grade added successfully.
+File created successfully.
+Student grade added successfully.
+Student search done successfully.
+Student grade added successfully.
+File created successfully.
+File created successfully.
+Student search done successfully.
+Student grade added successfully.
+Student grade added successfully.
+Student grade added successfully.
+Student grade added successfully.
+File created successfully.
+File created successfully.
+Student grade added successfully.
+Student grade added successfully.
+File created successfully.
+File created successfully.
+Student grade added successfully.
+File created successfully.
+Student grade added successfully.
+Student grade added successfully.
+Invalid command. Please use 'searchStudent "Name Surname"
+Student search done successfully.
+showAll grades listed successfully.
+listGrades grades listed successfully.
+File created successfully.
+File created successfully.
+File created successfully.
+File created successfully.
+Student search done successfully.
