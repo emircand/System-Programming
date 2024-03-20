@@ -2,6 +2,7 @@
 #include "addStudent.h"
 #include "sortList.h"
 #include "searchStudent.h"
+#include <time.h>
 
 void createGradesFile(const char *fileName) {
     pid_t pid = fork();
@@ -32,19 +33,27 @@ void createGradesFile(const char *fileName) {
     }
 }
 
-void logging(const char *message) {
+void handleCommand(const char *command, void (*handler)(char *), char *input) {
+    if (strncmp(input, command, strlen(command)) == 0) {
+        handler(input);
+        logging(command, "command executed successfully");
+    }
+}
+
+void logging(const char *functionName, const char *message) {
     int log_fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND, 0666);
     if (log_fd == -1) {
         perror("Error opening log file");
         exit(EXIT_FAILURE);
     }
 
-    if (log_fd == -1) {
-        perror("Error opening log file");
-        exit(EXIT_FAILURE);
-    }
+    char logMessage[256];
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
 
-    if (write(log_fd, message, strlen(message)) == -1) {
+    sprintf(logMessage, "[%02d:%02d:%02d] %s: %s\n", t->tm_hour, t->tm_min, t->tm_sec, functionName, message);
+
+    if (write(log_fd, logMessage, strlen(logMessage)) == -1) {
         perror("Error writing to log file");
         exit(EXIT_FAILURE);
     }
@@ -64,7 +73,7 @@ void displayUsage() {
                                ">  sortAll \"filename\" \"sortOption\" \"sortOrder\"\n"
                                ">  showAll \"filename\"\n"
                                ">  listGrades \"filename\"\n"
-                               " CHECK >  listSome \"filename\" \"numOfEntries\" \"pageNumber\" \n";
+                               ">  listSome \"filename\" \"numOfEntries\" \"pageNumber\" \n";
 
     write(STDOUT_FILENO, usageMessage, strlen(usageMessage));
 }
@@ -72,9 +81,12 @@ void displayUsage() {
 int main() {
     char input[MAX_COMMAND_LENGTH];
     char command[MAX_COMMAND_LENGTH];
+    write(STDOUT_FILENO, "Welcome to GTU Student Grades Program\n", 38);
+    
 
     while (1) {
         // Read user input
+        write(STDOUT_FILENO, "To quit type 'exit'\n", 20);
         write(STDOUT_FILENO, "> ", 2);
         ssize_t bytes_read = read(STDIN_FILENO, input, sizeof(input));
         if (bytes_read == -1) {
@@ -83,18 +95,22 @@ int main() {
         }
         input[bytes_read - 1] = '\0'; // Removing newline character
 
-        if (strncmp(input, "addStudentGrade ", strlen("addStudentGrade ")) == 0) {
-            handleAddStudentGrade(input);
+        // Add exit command
+        if (strncmp(input, "exit", 4) == 0) {
+            logging("exit", "Exiting program");
+            break;
+        } else if (strncmp(input, "addStudentGrade ", strlen("addStudentGrade ")) == 0) {
+            handleCommand("addStudentGrade", handleAddStudentGrade, input);
         }  else if (strncmp(input, "searchStudent ", strlen("searchStudent ")) == 0) {
-            handleSearchStudent(input);
+            handleCommand("searchStudent", handleSearchStudent, input);
         }  else if (strncmp(input, "sortAll ", strlen("sortAll ")) == 0) {
-            handleSortAll(input);
+            handleCommand("sortAll", handleSortAll, input);
         } else if(strncmp(input, "showAll ", strlen("showAll ")) == 0){
-            handleShowAll(input);
+            handleCommand("showAll", handleShowAll, input);
         } else if (strncmp(input, "listGrades ", strlen("listGrades ")) == 0) {
-            handleListGrades(input);
+            handleCommand("listGrades", handleListGrades, input);
         } else if (strncmp(input, "listSome ", strlen("listSome ")) == 0) {
-            handleListSome(input);
+            handleCommand("listSome", handleListSome, input);
         } else {
             // Parse input string to extract command
             char *token = strtok(input, " ");
@@ -123,7 +139,7 @@ int main() {
 
                 char *args[] = {"gtuStudentGrades", cleanedFileName, NULL};
                 createGradesFile(args[1]);
-                logging("File created successfully.\n");
+                logging("gtuStudentGrades", "File created successfully");
             } else {
                 const char *unknownCommandMsg = "Unknown command. Please try again.\n";
                 const char *usageMsg = "Usage: gtuStudentGrades <filename>\n";

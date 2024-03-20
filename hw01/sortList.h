@@ -1,13 +1,7 @@
 #ifndef sortList_h
 #define sortList_h
 
-
-int compareByNameAsc(const void *a, const void *b);
-int compareByNameDesc(const void *a, const void *b);
-int compareByGradeAsc(const void *a, const void *b);
-int compareByGradeDesc(const void *a, const void *b);
-
-void sortAll(const char *filename, int sortBy, int sortOrder);
+void sortAll(const char *filename, int sortOption, int sortDirection);
 void showAll(const char *filename);
 void listGrades(const char *filename);
 void listSome(const char *filename, int numOfEntries, int pageNumber);
@@ -22,5 +16,7 @@ void listGradesInChildProcess(void (*func)(const char *), const char *filename);
 void listSomeInChildProcess(void (*func)(const char *, int, int), const char *filename, const char *numOfEntries, const char *pageNumber);
 void showAllInChildProcess(void (*func)(const char *), const char *filename);
 
+int compare(const void *a, const void *b);
+int gradeValue(const char *grade);
 
 #endif /* sortList_h */

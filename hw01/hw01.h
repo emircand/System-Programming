@@ -18,4 +18,9 @@
 #define FILENAME "grades.txt"
 #define LOG_FILE "log.txt"
 
+void logging(const char *functionName, const char *message);
+void handleCommand(const char *command, void (*handler)(char *), char *input);
+void createGradesFile(const char *fileName);
+void displayUsage();
+
 #endif /* hw01_h */

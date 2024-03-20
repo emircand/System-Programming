@@ -1,49 +1,14 @@
 #include "sortList.h"
 #include "hw01.h"
 
-void sortInChildProcess(void (*func)(const char *, int, int), const char *filename, const char *sortBy, const char *sortOrder) {
-    pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork");
-        exit(EXIT_FAILURE);
-    } else if (pid == 0) {
-        // Child process
-        int sortByInt;
-        if (strcmp(sortBy, "name") == 0) {
-            sortByInt = 0;
-        } else if (strcmp(sortBy, "grade") == 0) {
-            sortByInt = 1;
-        } else {
-            perror("Invalid sortBy value. Please use 'name' or 'grade'.");
-            exit(EXIT_FAILURE);
-        }
-        int sortOrderInt;
-        if (strcmp(sortOrder, "asc") == 0) {
-            sortOrderInt = 0;
-        } else if (strcmp(sortOrder, "desc") == 0) {
-            sortOrderInt = 1;
-        } else {
-            perror("Invalid sortOrder value. Please use 'asc' or 'desc'.");
-            exit(EXIT_FAILURE);
-        }
-        func(filename, sortByInt, sortOrderInt);
-        exit(EXIT_SUCCESS); // Terminate child process upon successful execution
-    } else {
-        // Parent process
-        int status;
-        if (waitpid(pid, &status, 0) == -1) {
-            perror("waitpid");
-            exit(EXIT_FAILURE);
-        }
-        if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS) {
-            write(STDOUT_FILENO, "Operation on '", strlen("Operation on '"));
-            write(STDOUT_FILENO, filename, strlen(filename));
-            write(STDOUT_FILENO, "' completed successfully.\n", strlen("' completed successfully.\n"));
-        } else {
-            printf("Operation on '%s' failed.\n", filename);
-        }
-    }
-}
+typedef struct {
+    char name[50];
+    char grade[3];
+} Student;
+
+int sortBy;
+int sortOrder;
+
 
 void listGradesInChildProcess(void (*func)(const char *), const char *filename) {
     pid_t pid = fork();
@@ -177,54 +142,6 @@ void handleShowAll(char* input) {
     }
 }
 
-void sortAll(const char *filename, int sortBy, int sortOrder) {
-    int fd = open(filename, O_RDWR);
-    if (fd == -1) {
-        perror("Error opening file");
-        exit(EXIT_FAILURE);
-    }
-
-    // Read lines into an array
-    char lines[MAX_LINE_LENGTH][MAX_LINE_LENGTH];
-    int numLines = 0;
-    ssize_t bytesRead;
-    char buf[MAX_LINE_LENGTH];
-
-    while ((bytesRead = read(fd, buf, sizeof(buf))) > 0) {
-        strcpy(lines[numLines], buf);
-        numLines++;
-    }
-
-    if (bytesRead == -1) {
-        perror("Error reading file");
-        exit(EXIT_FAILURE);
-    }
-
-    // Sort lines based on sortBy and sortOrder
-    if (sortBy == 0) { // Sort by student name
-        qsort(lines, numLines, sizeof(lines[0]), sortOrder == 0 ? compareByNameAsc : compareByNameDesc);
-    } else { // Sort by grade
-        qsort(lines, numLines, sizeof(lines[0]), sortOrder == 0 ? compareByGradeAsc : compareByGradeDesc);
-    }
-
-    // Print sorted lines to the terminal
-    for (int i = 0; i < numLines; i++) {
-        write(STDOUT_FILENO, lines[i], strlen(lines[i]));
-        write(STDOUT_FILENO, "\n", 1); // Add a newline character after each line
-    }
-
-    close(fd);
-}
-
-// Comparison function definitions
-int compareByNameAsc(const void *a, const void *b) {
-    return strcmp((const char *)a, (const char *)b);
-}
-
-int compareByNameDesc(const void *a, const void *b) {
-    return -strcmp((const char *)a, (const char *)b);
-}
-
 int gradeValue(const char *grade) {
     if (strcmp(grade, "AA") == 0) return 8;
     else if (strcmp(grade, "BA") == 0) return 7;
@@ -233,25 +150,127 @@ int gradeValue(const char *grade) {
     else if (strcmp(grade, "CC") == 0) return 4;
     else if (strcmp(grade, "DC") == 0) return 3;
     else if (strcmp(grade, "DD") == 0) return 2;
-    else if (strcmp(grade, "FD") == 0) return 1;
-    else if (strcmp(grade, "NA") == 0) return 0;
+    else if (strcmp(grade, "NA") == 0) return 1;
     else if (strcmp(grade, "FF") == 0) return 0;
-    else if (strcmp(grade, "VF") == 0) return 0;
-    return 0;
+    return -1;
 }
 
-int compareByGradeAsc(const void *a, const void *b) {
-    const char *gradeA = *(const char **)a;
-    const char *gradeB = *(const char **)b;
-    return gradeValue(gradeA) - gradeValue(gradeB);
+int compare(const void *a, const void *b) {
+    Student *studentA = (Student *)a;
+    Student *studentB = (Student *)b;
+    int result;
+
+    if (sortBy == 0) {
+        result = strcmp(studentA->name, studentB->name);
+    } else {
+        result = gradeValue(studentA->grade) - gradeValue(studentB->grade);
+    }
+
+    return sortOrder == 0 ? result : -result;
 }
 
-int compareByGradeDesc(const void *a, const void *b) {
-    const char *gradeA = *(const char **)a;
-    const char *gradeB = *(const char **)b;
-    return gradeValue(gradeB) - gradeValue(gradeA);
+void sortAll(const char *filename, int sortOption, int sortDirection) {
+    int fd = open(filename, O_RDONLY);
+    if (fd == -1) {
+        perror("Error opening file");
+        exit(EXIT_FAILURE);
+    }
+
+    // Count the number of lines in the file
+    int count = 0;
+    char ch;
+    while (read(fd, &ch, 1) > 0) {
+        if (ch == '\n') {
+            count++;
+        }
+    }
+
+    // Allocate memory for the students array
+    Student *students = malloc(count * sizeof(Student));
+    if (students == NULL) {
+        perror("Error allocating memory");
+        exit(EXIT_FAILURE);
+    }
+
+    // Go back to the start of the file
+    lseek(fd, 0, SEEK_SET);
+
+    int i = 0;
+    char line[100];
+    int index = 0;
+    while (read(fd, &ch, 1) > 0) {
+        if (ch == '\n') {
+            line[index] = '\0'; // Null-terminate the string
+            sscanf(line, "\"%[^\"]\" \"%[^\"]\"\n", students[i].name, students[i].grade);
+            i++;
+            index = 0; // Reset the index for the next line
+        } else {
+            line[index] = ch;
+            index++;
+        }
+    }
+
+    sortBy = sortOption;
+    sortOrder = sortDirection;
+
+    qsort(students, i, sizeof(Student), compare);
+
+    for (int j = 0; j < i; j++) {
+        char output[100];
+        sprintf(output, "\"%s\" \"%s\"\n", students[j].name, students[j].grade);
+        write(STDOUT_FILENO, output, strlen(output));
+    }
+
+    close(fd);
+    free(students);
 }
 
+// Sorts the file in a child process
+void sortInChildProcess(void (*func)(const char *, int, int), const char *filename, const char *sortByStr, const char *sortOrderStr) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    } else if (pid == 0) {
+        // Child process
+        int sortByInt;
+        if (strcmp(sortByStr, "name") == 0) {
+            sortByInt = 0;
+        } else if (strcmp(sortByStr, "grade") == 0) {
+            sortByInt = 1;
+        } else {
+            perror("Invalid sortBy value. Please use 'name' or 'grade'.");
+            exit(EXIT_FAILURE);
+        }
+        int sortOrderInt;
+        if (strcmp(sortOrderStr, "asc") == 0) {
+            sortOrderInt = 0;
+        } else if (strcmp(sortOrderStr, "desc") == 0) {
+            sortOrderInt = 1;
+        } else {
+            perror("Invalid sortOrder value. Please use 'asc' or 'desc'.");
+            exit(EXIT_FAILURE);
+        }
+        func(filename, sortByInt, sortOrderInt);
+        exit(EXIT_SUCCESS); // Terminate child process upon successful execution
+    } else {
+        // Parent process
+        int status;
+        if (waitpid(pid, &status, 0) == -1) {
+            perror("waitpid");
+            exit(EXIT_FAILURE);
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS) {
+            write(STDOUT_FILENO, "Operation on '", strlen("Operation on '"));
+            write(STDOUT_FILENO, filename, strlen(filename));
+            write(STDOUT_FILENO, "' completed successfully.\n", strlen("' completed successfully.\n"));
+        } else {
+            printf("Operation on '%s' failed.\n", filename);
+        }
+    }
+}
+
+// Lists the first 5 entries from the file
 void listGrades(const char *filename) {
     int fd = open(filename, O_RDONLY);
     if (fd == -1) {
@@ -260,33 +279,42 @@ void listGrades(const char *filename) {
     }
 
     char line[MAX_LINE_LENGTH];
-    ssize_t bytesRead;
     int count = 0;
+    ssize_t n;
 
-    char header[100];
-    int header_len = snprintf(header, sizeof(header), "First 5 entries from %s:\n", filename);
-    write(STDOUT_FILENO, header, header_len);
+    printf("First 5 entries from %s:\n", filename);
 
-    while ((bytesRead = read(fd, line, sizeof(line))) > 0 && count < 5) {
-        write(STDOUT_FILENO, line, bytesRead);
-        for (int i = 0; i < bytesRead; i++) {
+    while (count < 5) {
+        int i = 0;
+        while (i < MAX_LINE_LENGTH - 1) {
+            n = read(fd, &line[i], 1);
+            if (n == -1) {
+                perror("Error reading file");
+                exit(EXIT_FAILURE);
+            } else if (n == 0) {
+                break;  // End of file
+            }
+
             if (line[i] == '\n') {
-                count++;
+                break;  // End of line
             }
-            if (count == 5) {
-                break;
-            }
-        }
-    }
 
-    if (bytesRead == -1) {
-        perror("Error reading file");
-        exit(EXIT_FAILURE);
+            i++;
+        }
+
+        if (n == 0 && i == 0) {
+            break;  // End of file
+        }
+
+        line[i] = '\0';  // Null-terminate the string
+        printf("%s\n", line);
+        count++;
     }
 
     close(fd);
 }
 
+// Lists the specified number of entries from the specified page
 void listSome(const char *filename, int numOfEntries, int pageNumber) {
     int fd = open(filename, O_RDONLY);
     if (fd == -1) {
@@ -335,22 +363,22 @@ void showAll(const char *filename) {
 
     char line[MAX_LINE_LENGTH];
     int count = 0;
-    int page = 0;
+    int page = 1;
     ssize_t bytesRead;
 
+    printf("Page %d:\n", page);
+
     while ((bytesRead = read(fd, line, sizeof(line))) > 0) {
-        write(STDOUT_FILENO, line, bytesRead);
         for (int i = 0; i < bytesRead; i++) {
             if (line[i] == '\n') {
                 count++;
+                if (count == 5) {
+                    count = 0;
+                    page++;
+                    printf("\nPage %d:\n", page);
+                }
             }
-            if (count == 5) {
-                count = 0;
-                page++;
-                char pageHeader[50];
-                int pageHeader_len = snprintf(pageHeader, sizeof(pageHeader), "\nPage %d:\n", page);
-                write(STDOUT_FILENO, pageHeader, pageHeader_len);
-            }
+            write(STDOUT_FILENO, &line[i], 1);
         }
     }
 
