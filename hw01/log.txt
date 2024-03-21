@@ -1,49 +1,32 @@
-File created successfully.
-File created successfully.
-File created successfully.
-Student Search done successfully.
-File created successfully.
-Student Search done successfully.
-Student Search done successfully.
-File created successfully.
-Student grade added successfully.
-Student Search done successfully.
-Student search done successfully.
-File created successfully.
-File created successfully.
-File created successfully.
-Student grade added successfully.
-File created successfully.
-Student grade added successfully.
-Student search done successfully.
-Student grade added successfully.
-File created successfully.
-File created successfully.
-Student search done successfully.
-Student grade added successfully.
-Student grade added successfully.
-Student grade added successfully.
-Student grade added successfully.
-File created successfully.
-File created successfully.
-Student grade added successfully.
-Student grade added successfully.
-File created successfully.
-File created successfully.
-Student grade added successfully.
-File created successfully.
-Student grade added successfully.
-Student grade added successfully.
-Invalid command. Please use 'searchStudent "Name Surname"
-Student search done successfully.
-showAll grades listed successfully.
-listGrades grades listed successfully.
-File created successfully.
-File created successfully.
-File created successfully.
-File created successfully.
-Student search done successfully.
-File created successfully.
 [20:00:14] showAll : command executed successfully
 [20:05:49] exit: Exiting program
 [20:06:04] showAll: command executed successfully
+[22:39:25] showAll: command executed successfully
+[22:39:55] listSome: command executed successfully
+[22:40:48] listSome: command executed successfully
+[22:41:20] listSome: command executed successfully
+[22:44:12] searchStudent: command executed successfully
+[22:44:33] searchStudent: command executed successfully
+[22:50:50] searchStudent: command executed successfully
+[22:51:18] addStudentGrade: command executed successfully
+[23:35:53] gtuStudentGrades: File created successfully
+[23:36:31] gtuStudentGrades: File created successfully
+[23:36:43] exit: Exiting program
+[23:36:59] gtuStudentGrades: File created successfully
+[23:38:02] addStudentGrade: command executed successfully
+[23:40:13] searchStudent: command executed successfully
+[23:40:55] showAll: command executed successfully
+[23:42:18] sortAll: command executed successfully
+[23:43:54] sortAll: command executed successfully
+[23:44:50] sortAll: command executed successfully
+[23:45:20] sortAll: command executed successfully
+[23:46:04] listGrades: command executed successfully
+[23:46:28] listSome: command executed successfully
+[23:47:16] listGrades: command executed successfully
+[23:49:03] listGrades: command executed successfully
+[23:49:19] exit: Exiting program
+[22:43:26] gtuStudentGrades: File created successfully
+[22:43:45] listGrades: command executed successfully
+[22:44:03] listSome: command executed successfully
+[22:44:26] sortAll: command executed successfully
+[22:44:29] exit: Exiting program

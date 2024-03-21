@@ -102,3 +102,5 @@
 "Ophelie Constance" "AA"
 "Amory Elcox" "FF"
 "Alisun Bernhart" "BA"
+"Taha Demirel" "BB"
+"Arda Güler" "AA"

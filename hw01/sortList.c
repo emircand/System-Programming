@@ -14,6 +14,7 @@ void listGradesInChildProcess(void (*func)(const char *), const char *filename) 
     pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
+        logging("listGrades", "fork failed");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
         // Child process
@@ -24,6 +25,7 @@ void listGradesInChildProcess(void (*func)(const char *), const char *filename) 
         int status;
         if (waitpid(pid, &status, 0) == -1) {
             perror("waitpid");
+            logging("listGrades", "waitpid failed");
             exit(EXIT_FAILURE);
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS) {
@@ -31,7 +33,9 @@ void listGradesInChildProcess(void (*func)(const char *), const char *filename) 
             write(STDOUT_FILENO, filename, strlen(filename));
             write(STDOUT_FILENO, "' completed successfully.\n", strlen("' completed successfully.\n"));
         } else {
-            printf("Operation on '%s' failed.\n", filename);
+            write(STDOUT_FILENO, "Operation on '", strlen("Operation on '"));
+            write(STDOUT_FILENO, filename, strlen(filename));
+            write(STDOUT_FILENO, "' failed.\n", strlen("' failed.\n"));
         }
     }
 }
@@ -40,6 +44,7 @@ void listSomeInChildProcess(void (*func)(const char *, int, int), const char *fi
     pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
+        logging("listSome", "fork failed");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
         // Child process
@@ -52,6 +57,7 @@ void listSomeInChildProcess(void (*func)(const char *, int, int), const char *fi
         int status;
         if (waitpid(pid, &status, 0) == -1) {
             perror("waitpid");
+            logging("listSome", "waitpid failed");
             exit(EXIT_FAILURE);
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS) {
@@ -59,7 +65,9 @@ void listSomeInChildProcess(void (*func)(const char *, int, int), const char *fi
             write(STDOUT_FILENO, filename, strlen(filename));
             write(STDOUT_FILENO, "' completed successfully.\n", strlen("' completed successfully.\n"));
         } else {
-            printf("Operation on '%s' failed.\n", filename);
+            write(STDOUT_FILENO, "Operation on '", strlen("Operation on '"));
+            write(STDOUT_FILENO, filename, strlen(filename));
+            write(STDOUT_FILENO, "' failed.\n", strlen("' failed.\n"));
         }
     }
 }
@@ -68,6 +76,7 @@ void showAllInChildProcess(void (*func)(const char *), const char *filename) {
     pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
+        logging("showAll", "fork failed");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
         // Child process
@@ -78,6 +87,7 @@ void showAllInChildProcess(void (*func)(const char *), const char *filename) {
         int status;
         if (waitpid(pid, &status, 0) == -1) {
             perror("waitpid");
+            logging("showAll", "waitpid failed");
             exit(EXIT_FAILURE);
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS) {
@@ -85,7 +95,9 @@ void showAllInChildProcess(void (*func)(const char *), const char *filename) {
             write(STDOUT_FILENO, filename, strlen(filename));
             write(STDOUT_FILENO, "' completed successfully.\n", strlen("' completed successfully.\n"));
         } else {
-            printf("Operation on '%s' failed.\n", filename);
+            write(STDOUT_FILENO, "Operation on '", strlen("Operation on '"));
+            write(STDOUT_FILENO, filename, strlen(filename));
+            write(STDOUT_FILENO, "' failed.\n", strlen("' failed.\n"));
         }
     }
 }
@@ -173,6 +185,7 @@ void sortAll(const char *filename, int sortOption, int sortDirection) {
     int fd = open(filename, O_RDONLY);
     if (fd == -1) {
         perror("Error opening file");
+        logging("sortAll", "Error opening file");
         exit(EXIT_FAILURE);
     }
 
@@ -189,6 +202,7 @@ void sortAll(const char *filename, int sortOption, int sortDirection) {
     Student *students = malloc(count * sizeof(Student));
     if (students == NULL) {
         perror("Error allocating memory");
+        logging("sortAll", "Error allocating memory");
         exit(EXIT_FAILURE);
     }
 
@@ -230,6 +244,7 @@ void sortInChildProcess(void (*func)(const char *, int, int), const char *filena
     pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
+        logging("sortAll", "fork failed");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
         // Child process
@@ -240,6 +255,7 @@ void sortInChildProcess(void (*func)(const char *, int, int), const char *filena
             sortByInt = 1;
         } else {
             perror("Invalid sortBy value. Please use 'name' or 'grade'.");
+            logging("sortAll", "Invalid sortBy value. Please use 'name' or 'grade'.");
             exit(EXIT_FAILURE);
         }
         int sortOrderInt;
@@ -249,6 +265,7 @@ void sortInChildProcess(void (*func)(const char *, int, int), const char *filena
             sortOrderInt = 1;
         } else {
             perror("Invalid sortOrder value. Please use 'asc' or 'desc'.");
+            logging("sortAll", "Invalid sortOrder value. Please use 'asc' or 'desc'.");
             exit(EXIT_FAILURE);
         }
         func(filename, sortByInt, sortOrderInt);
@@ -258,6 +275,7 @@ void sortInChildProcess(void (*func)(const char *, int, int), const char *filena
         int status;
         if (waitpid(pid, &status, 0) == -1) {
             perror("waitpid");
+            logging("sortAll", "waitpid failed");
             exit(EXIT_FAILURE);
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS) {
@@ -265,16 +283,18 @@ void sortInChildProcess(void (*func)(const char *, int, int), const char *filena
             write(STDOUT_FILENO, filename, strlen(filename));
             write(STDOUT_FILENO, "' completed successfully.\n", strlen("' completed successfully.\n"));
         } else {
-            printf("Operation on '%s' failed.\n", filename);
+            write(STDOUT_FILENO, "Operation on '", strlen("Operation on '"));
+            write(STDOUT_FILENO, filename, strlen(filename));
+            write(STDOUT_FILENO, "' failed.\n", strlen("' failed.\n"));
         }
     }
 }
 
-// Lists the first 5 entries from the file
 void listGrades(const char *filename) {
     int fd = open(filename, O_RDONLY);
     if (fd == -1) {
         perror("Error opening file");
+        logging("listGrades", "Error opening file");
         exit(EXIT_FAILURE);
     }
 
@@ -282,7 +302,9 @@ void listGrades(const char *filename) {
     int count = 0;
     ssize_t n;
 
-    printf("First 5 entries from %s:\n", filename);
+    write(STDOUT_FILENO, "First 5 entries from ", strlen("First 5 entries from "));
+    write(STDOUT_FILENO, filename, strlen(filename));
+    write(STDOUT_FILENO, "\n", 1);
 
     while (count < 5) {
         int i = 0;
@@ -290,6 +312,7 @@ void listGrades(const char *filename) {
             n = read(fd, &line[i], 1);
             if (n == -1) {
                 perror("Error reading file");
+                logging("listGrades", "Error reading file");
                 exit(EXIT_FAILURE);
             } else if (n == 0) {
                 break;  // End of file
@@ -307,7 +330,8 @@ void listGrades(const char *filename) {
         }
 
         line[i] = '\0';  // Null-terminate the string
-        printf("%s\n", line);
+        write(STDOUT_FILENO, line, strlen(line));  // Print the line
+        write(STDOUT_FILENO, "\n", 1);
         count++;
     }
 
@@ -319,6 +343,7 @@ void listSome(const char *filename, int numOfEntries, int pageNumber) {
     int fd = open(filename, O_RDONLY);
     if (fd == -1) {
         perror("Error opening file");
+        logging("listSome", "Error opening file");
         exit(EXIT_FAILURE);
     }
 
@@ -341,6 +366,7 @@ void listSome(const char *filename, int numOfEntries, int pageNumber) {
                 write(STDOUT_FILENO, &line[i], 1);
             }
             if (count > endEntry) {
+                write(STDOUT_FILENO, "\n", 1);
                 break;
             }
         }
@@ -348,6 +374,7 @@ void listSome(const char *filename, int numOfEntries, int pageNumber) {
 
     if (bytesRead == -1) {
         perror("Error reading file");
+        logging("listSome", "Error reading file");
         exit(EXIT_FAILURE);
     }
 
@@ -358,6 +385,7 @@ void showAll(const char *filename) {
     int fd = open(filename, O_RDONLY);
     if (fd == -1) {
         perror("Error opening file");
+        logging("showAll", "Error opening file");
         exit(EXIT_FAILURE);
     }
 
@@ -366,7 +394,7 @@ void showAll(const char *filename) {
     int page = 1;
     ssize_t bytesRead;
 
-    printf("Page %d:\n", page);
+    write(STDOUT_FILENO, "All entries from ", strlen("All entries from "));
 
     while ((bytesRead = read(fd, line, sizeof(line))) > 0) {
         for (int i = 0; i < bytesRead; i++) {
@@ -375,7 +403,12 @@ void showAll(const char *filename) {
                 if (count == 5) {
                     count = 0;
                     page++;
-                    printf("\nPage %d:\n", page);
+                    write(STDOUT_FILENO, "\nPage ", strlen("Page "));
+                    char pageStr[10];
+                    sprintf(pageStr, "%d", page);
+                    write(STDOUT_FILENO, pageStr, strlen(pageStr));
+                    write(STDOUT_FILENO, "\n", 1);
+
                 }
             }
             write(STDOUT_FILENO, &line[i], 1);
@@ -384,6 +417,7 @@ void showAll(const char *filename) {
 
     if (bytesRead == -1) {
         perror("Error reading file");
+        logging("showAll", "Error reading file");
         exit(EXIT_FAILURE);
     }
 

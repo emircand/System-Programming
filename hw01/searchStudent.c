@@ -20,6 +20,7 @@ void searchInChildProcess(void (*func)(const char *, const char *), const char *
     pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
+        logging("searchInChildProcess", "Fork failed");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
         // Child process
@@ -30,6 +31,7 @@ void searchInChildProcess(void (*func)(const char *, const char *), const char *
         int status;
         if (waitpid(pid, &status, 0) == -1) {
             perror("waitpid");
+            logging("searchInChildProcess", "Error waiting for child process");
             exit(EXIT_FAILURE);
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS) {
@@ -37,7 +39,9 @@ void searchInChildProcess(void (*func)(const char *, const char *), const char *
             write(STDOUT_FILENO, filename, strlen(filename));
             write(STDOUT_FILENO, "' completed successfully.\n", strlen("' completed successfully.\n"));
         } else {
-            printf("Operation on '%s' failed.\n", filename);
+            write(STDOUT_FILENO, "Operation on '", strlen("Operation on '"));
+            write(STDOUT_FILENO, filename, strlen(filename));
+            write(STDOUT_FILENO, "' failed.\n", strlen("' failed.\n"));
         }
     }
 }
@@ -46,6 +50,7 @@ void searchStudent(const char *fileName, const char *studentName) {
     int file = open(fileName, O_RDONLY);
     if (file == -1) {
         perror("Error opening file");
+        logging("searchStudent", "Error opening file");
         exit(EXIT_FAILURE);
     }
 

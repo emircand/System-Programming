@@ -21,6 +21,7 @@ void addInChildProcess(void (*func)(const char *, const char *, const char *), c
     pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
+        logging("addInChildProcess", "Fork failed");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
         // Child process
@@ -31,6 +32,7 @@ void addInChildProcess(void (*func)(const char *, const char *, const char *), c
         int status;
         if (waitpid(pid, &status, 0) == -1) {
             perror("waitpid");
+            logging("addInChildProcess", "Error waiting for child process");
             exit(EXIT_FAILURE);
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS) {
@@ -38,7 +40,9 @@ void addInChildProcess(void (*func)(const char *, const char *, const char *), c
             write(STDOUT_FILENO, filename, strlen(filename));
             write(STDOUT_FILENO, "' completed successfully.\n", strlen("' completed successfully.\n"));
         } else {
-            printf("Operation on '%s' failed.\n", filename);
+            write(STDOUT_FILENO, "Operation on '", strlen("Operation on '"));
+            write(STDOUT_FILENO, filename, strlen(filename));
+            write(STDOUT_FILENO, "' failed.\n", strlen("' failed.\n"));
         }
     }
 }
@@ -47,6 +51,7 @@ void addStudentGrade(const char *filename, const char *studentName, const char *
     int fd = open(filename, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR);
     if (fd == -1) {
         perror("Error opening file");
+        logging("addStudentGrade", "Error opening file");
         exit(EXIT_FAILURE);
     }
 
@@ -54,7 +59,9 @@ void addStudentGrade(const char *filename, const char *studentName, const char *
     int len = snprintf(buffer, sizeof(buffer), "\"%s\" \"%s\"\n", studentName, grade);
     if (write(fd, buffer, len) != len) {
         perror("Error writing to file");
+        logging("addStudentGrade", "Error writing to file");
         exit(EXIT_FAILURE);
     }
     close(fd);
 }
+
