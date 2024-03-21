@@ -17,6 +17,10 @@
 *.so
 *.dll
 *.dylib
+*.docx
+*.pdf
+*.txt
+
 
 # Ignore compiled libraries and dependencies
 lib/
