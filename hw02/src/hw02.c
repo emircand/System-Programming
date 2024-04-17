@@ -108,7 +108,7 @@ void create_fifo(const char* fifo_name) {
 
 void child1(int n, char* buffer) {
     int fd1 = open(FIFO1, O_RDONLY | O_NONBLOCK);
-    printf("Child 1 %d\n", getpid());
+    printf("Child 1 (PID: %d, Parent PID: %d)\n", getpid(), getppid());
     if (fd1 < 0) {
         perror("Failed to open FIFO1 at read mode");
         exit(EXIT_FAILURE);
@@ -126,9 +126,12 @@ void child1(int n, char* buffer) {
         exit(EXIT_FAILURE);
     }
     int sum = 0;
+    printf("Array elements in FIF01: ");
     for (int i = 0; i < n; i++) {
         sum += sum_arr[i];
+        printf("%d, ", sum_arr[i]);
     }
+    printf("\n");
     int length = sprintf(buffer, "Sum: %d\n", sum);
     write(STDOUT_FILENO, buffer, length);
     memset(buffer, 0, BUF_LINE);
@@ -162,7 +165,7 @@ void child2(char* cmd, char* buffer, int sum) {
         perror("Failed to open FIFO2 at read mode");
         exit(EXIT_FAILURE);
     }
-    printf("Child 2 %d\n", getpid());
+    printf("Child 2 (PID: %d, Parent PID: %d)\n", getpid(), getppid());
     sleep(10);
     if (strcmp(cmd, "multiply") == 0) { 
         int arr[MAX_SIZE];
@@ -171,11 +174,16 @@ void child2(char* cmd, char* buffer, int sum) {
             index++;
         }
         int product = 1;
+        printf("Array elements in FIFO2: ");
         for (int i = 0; i < index; i++) {
             product *= arr[i];
-            sum += arr[i];
+            if(i == index - 1){
+                sum += arr[i];
+            }
+            printf("%d, ", arr[i]);
         }
-        int length = sprintf(buffer, "Product: %d\n", product);
+        printf("\n");
+        int length = sprintf(buffer, "Multiply: %d\n", product);
         write(STDOUT_FILENO, buffer, length);
         memset(buffer, 0, BUF_LINE);
         // Print the sum of the results of all child processes
