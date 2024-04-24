@@ -14,15 +14,18 @@ void queue_init(struct queue* q, int capacity);
 void enqueue(struct queue* q, struct request* req);
 struct request* dequeue(struct queue* q);
 char** getFilesInDirectory(const char* dirname); 
+void err_exit(const char *err);
+void handle_client_request(struct request* req, pid_t* child_pids, int* child_count, int server_fifo_fd, int client_id);
 
 
 
 int main(int argc, char* argv[]) {
-    int server_fifo_fd, client_fifo_fd;
+    int server_fifo_fd, client_fifo_fd, num_read, num_write;
+    int server_fd, dummy_fd, client_fd, client_id, client_max;
     char buf[BUF_SIZE];
     int shm_fd;
     void* shm_ptr;
-    sem_t* sem;
+    sem_t sem;
     struct sigaction sa;
     
     sa.sa_flags = SA_SIGINFO | SA_RESTART;
@@ -44,12 +47,14 @@ int main(int argc, char* argv[]) {
     queue_init(&request_queue, max_clients);
     
 
-    // Change to the specified directory, creating it if it doesn't exist
-    mkdir(dir_name, 0777);
-    if (chdir(dir_name) == -1) {
-        perror("chdir");
-        exit(EXIT_FAILURE);
-    }
+    /* Create the server folder if it doesn't exist */
+    if ((mkdir(dir_name, S_IRWXU | S_IWUSR | S_IRUSR | S_IXUSR | S_IWGRP | S_IRGRP)) == -1 && errno != EEXIST)
+        err_exit("mkdir");
+
+    /* Open server folder */
+    if ((dir_name = opendir(argv[1])) == NULL)
+        err_exit("opendir");
+
 
     // Create a log file
     FILE* log_file = fopen("log.txt", "w");
@@ -71,8 +76,6 @@ int main(int argc, char* argv[]) {
         perror("mkfifo");
     }
 
-    printf(">> Server FIFO created %s\n", server_fifo);
-
     // Open the server FIFO
     server_fifo_fd = open(server_fifo, O_RDONLY);
     if (server_fifo_fd == -1) {
@@ -80,10 +83,18 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    // Open the dummy FIFO for writing to avoid EOF
+    dummy_fd = open(server_fifo, O_WRONLY);
+    if (dummy_fd == -1) {
+        perror("open");
+        exit(EXIT_FAILURE);
+    }
+
     printf(">> Server FIFO opened\n");
 
+    client_id = 0;
     // Handle the client's requests
-    while (1) { // Changed from 'while (i < 2)'
+    while (1) {
         // Read the client's request from the server FIFO
         struct request* req = malloc(sizeof(struct request));
         ssize_t numRead = read(server_fifo_fd, req, sizeof(struct request));
@@ -91,70 +102,69 @@ int main(int argc, char* argv[]) {
             perror("read");
             free(req);
             continue;
-        } else if (numRead != sizeof(struct request)) {
-            fprintf(stderr, "Partial/over read. Expected %ld, got %ld\n", sizeof(struct request), numRead);
+        } else if (numRead == 0) {
+            // No data read, continue waiting for the next client
             free(req);
-            break;
+            continue;
         }
-        // Fork a new process for each client
-        pid_t pid = fork();
-        if (pid == 0) {
-            // Child process: handle the client's request
-            
-            // Create the client FIFO name
-            char client_fifo[BUF_SIZE];
-            snprintf(client_fifo, sizeof(client_fifo), CLIENT_FIFO_TEMP, req->pid);
-
-            // Open the client FIFO for writing
-            int client_fd = open(client_fifo, O_WRONLY);
-            if (client_fd == -1) {
-                perror("open");
-                free(req);
-                continue;
-            }
-            printf(">> Child PID: %d connected as client\n", req->pid);
-            printf("DELETE >> Request data: %s\n", req->data);
-
-            
-            char response[BUF_SIZE] = "Hello from server";
-
-            if (write(client_fd, response, sizeof(response)) != sizeof(response)) {
-                perror("write");
-            }
-
-            // Close the client FIFO
-            close(client_fd);
-
-            // Free the request
-            free(req);
-
-            // Exit the child process
-            exit(EXIT_SUCCESS);
-        } else if (pid > 0) {
-            // Parent process: do nothing, wait for the next client
-            int status;
-            child_pids[child_count++] = pid;
-            waitpid(pid, &status, WNOHANG);
-            printf(">> Waiting for clients...\n");
-            
-        } else {
-            perror("fork");
-            exit(EXIT_FAILURE);
-        }
-        
+        // Handle the client's request
+        ++client_id;
+        handle_client_request(req, child_pids, &child_count, server_fifo_fd, client_id);
     }
 
     // Clean up
     close(server_fifo_fd);
     unlink(server_fifo);
-    // munmap(shm_ptr, BUF_SIZE);
-    // close(shm_fd);
-    // shm_unlink(SHM_NAME);
-    // sem_close(sem);
-    // sem_unlink(SEM_NAME);
-
-    
+    fclose(log_file);
     return 0;
+}
+
+void handle_client_request(struct request* req, pid_t* child_pids, int* child_count, int server_fifo_fd, int client_id) {
+    // Fork a new process for each client
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process: handle the client's request
+
+        // Create the client FIFO name
+        char client_fifo[BUF_SIZE];
+        snprintf(client_fifo, sizeof(client_fifo), CLIENT_FIFO_TEMP, req->pid);
+
+        // Open the client FIFO for writing
+        int client_fd = open(client_fifo, O_WRONLY);
+        if (client_fd == -1) {
+            perror("open");
+            free(req);
+            return;
+        }
+        printf(">> Child PID: %d connected as client%d\n", req->pid, client_id);
+
+        char response[BUF_SIZE] = "Hello from server";
+
+        if (write(client_fd, response, sizeof(response)) != sizeof(response)) {
+            perror("write");
+        }
+
+        // Close the client FIFO
+        close(client_fd);
+        close(server_fifo_fd);
+
+        printf(">> client%d disconnected\n", client_id);
+
+        // Free the request
+        free(req);
+
+        // Exit the child process
+        exit(EXIT_SUCCESS);
+    } else if (pid > 0) {
+        // Parent process: do nothing, wait for the next client
+        int status;
+        child_pids[*child_count] = pid;
+        (*child_count)++;
+        waitpid(pid, &status, WNOHANG);
+    } else {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
 }
 
 
@@ -229,45 +239,8 @@ struct request* dequeue(struct queue* q) {
     return req;
 }
 
-char** getFilesInDirectory(const char* dirname) {
-    DIR* directory;
-    struct dirent* entry;
-    char data[512], *tmp;
-
-    directory = opendir(dirname);
-    if (directory == NULL) {
-        perror("Unable to open directory");
-        fprintf(stderr, "Error: %s\n", dirname);
-        exit(EXIT_FAILURE);
-    }
-
-    /* Reset the position of the directory stream directory to the beginning of the directory */
-    rewinddir(directory);
-
-    /* Take guard for the empty directory */
-    data[0] = '\0';
-    tmp = data;
-    while ((entry = readdir(directory)) != NULL) {
-        /* Skip the hidden files */
-        if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-            sprintf(tmp, "%s\n", entry->d_name);
-            tmp += strlen(tmp);
-        }
-    }
-
-    closedir(directory);
-
-    /* Remove the last new line */
-    data[strlen(data) - 1] = '\0';
-
-    /* Convert data to char** for compatibility with existing code */
-    char** files = malloc(2 * sizeof(char*)); // Only two elements - one for the data and one for the NULL terminator
-    if (!files) {
-        perror("Memory allocation failed");
-        exit(EXIT_FAILURE);
-    }
-    files[0] = strdup(data); // Duplicate the data string
-    files[1] = NULL; // Null-terminate the array
-
-    return files;
+void err_exit(const char *err) 
+{
+    perror(err);
+    exit(EXIT_FAILURE);
 }

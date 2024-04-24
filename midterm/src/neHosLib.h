@@ -13,6 +13,7 @@
 #include <signal.h>
 #include <time.h>
 #include <dirent.h>
+#include <errno.h>
 
 #define SERVER_FIFO_TEMP "/tmp/server.%d.fifo"
 #define CLIENT_FIFO_TEMP "/tmp/client.%d.fifo"
