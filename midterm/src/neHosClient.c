@@ -20,6 +20,7 @@ int main(int argc, char *argv[]) {
     // Fill the request structure
     req.pid = getpid();
     strcpy(req.data, argv[1]);
+    req.type = CONNECT;
 
 
     // Create the client FIFO
@@ -35,15 +36,14 @@ int main(int argc, char *argv[]) {
     printf("Server FIFO: %s\n", server_fifo);
 
     // Open the server FIFO for writing
-    server_fd = open(server_fifo, O_WRONLY);
+    server_fd = open(server_fifo, O_RDWR);
     if (server_fd == -1) {
         perror("open");
         exit(EXIT_FAILURE);
     }
 
-    // Connect to the server
-    //connect_to_server(server_fd, strcmp(argv[1], "Connect") == 0);
-
+    connect_to_server(server_fd, true);
+    req.type = COMMAND;
     while(1){
         //Wait for user input
         printf(">>Enter a command: ");
@@ -70,17 +70,16 @@ int main(int argc, char *argv[]) {
         }
 
         // Read the server's response from the client FIFO
-        char response[256];
-        response[0] = '\0'; // Clear the response buffer
-        if (read(client_fd, response, sizeof(response)) <= 0) {
+        struct response resp;
+        if (read(client_fd, &resp, sizeof(resp)) <= 0) {
             perror("read");
             exit(EXIT_FAILURE);
         }
-        printf(">>Response from server: %s\n", response);
+        printf(">>Response from server: %s\n", resp.data);
 
         // Close the client FIFO
         close(client_fd);
-        if (strcmp(response, "Quitting...") == 0) {
+        if (strcmp(resp.data, "Quitting...") == 0) {
             printf(">>bye...\n");
             break;
         }
@@ -96,23 +95,49 @@ int main(int argc, char *argv[]) {
 
 // Send a "Connect" or "tryConnect" request
 void connect_to_server(int server_fd, bool wait) {
-    sem_wait(&sem);
+    struct request req = { .pid = getpid(), .data = {0} };
+    strcpy(req.data, wait ? "Connect" : "tryConnect");
 
-    write(server_fd, wait ? "Connect" : "tryConnect", wait ? 8 : 11);
+    write(server_fd, &req, sizeof(req));
 
-    char response[256];
-    read(server_fd, response, sizeof(response));
-
-    if (strcmp(response, "Connected") == 0) {
-        printf("Connected to the server\n");
-    } else if (strcmp(response, "Full") == 0 && wait) {
-        printf("Server is full, waiting for a spot to become available\n");
-        read(server_fd, response, sizeof(response));
-        printf("Connected to the server\n");
-    } else {
-        printf("Server is full, exiting\n");
+    // Open the client FIFO for reading
+    char client_fifo[256];
+    snprintf(client_fifo, sizeof(client_fifo), CLIENT_FIFO_TEMP, req.pid);
+    int client_fd = open(client_fifo, O_RDONLY);
+    if (client_fd == -1) {
+        perror("open");
         exit(EXIT_FAILURE);
     }
-
-    sem_post(&sem);
+    while (true) {
+        struct response resp;
+        ssize_t numRead = read(client_fd, &resp, sizeof(resp));
+        if (numRead <= 0) {
+            perror("read");
+            exit(EXIT_FAILURE);
+        }
+        close(client_fd);
+        switch (resp.status) {
+            case RESP_CONNECT:
+                printf("Connected to the server.\n");
+                return;
+            case RESP_ERROR:
+                if (strcmp(resp.data, "Server full") == 0) {
+                    if (wait) {
+                        printf("Server is full, waiting for a spot to become available...\n");
+                        sleep(5); // wait for a spot to become available
+                        connect_to_server(server_fd, true);
+                    } else {
+                        printf("Server is full, exiting.\n");
+                        exit(EXIT_FAILURE);
+                    }
+                } else {
+                    printf("Unexpected response from server: status=%d, data=%s\n", resp.status, resp.data);
+                    exit(EXIT_FAILURE);
+                }
+                break;
+            default:
+                printf("Unexpected response from server: status=%d, data=%s\n", resp.status, resp.data);
+                exit(EXIT_FAILURE);
+        }
+    }
 }
