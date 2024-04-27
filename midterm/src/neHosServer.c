@@ -1,6 +1,5 @@
 #include "neHosLib.h"
 
-
 #define BUF_SIZE 1024
 #define MAX_FILES 100
 #define SHM_NAME "/shm"
@@ -9,23 +8,11 @@ FILE* log_file = NULL;
 pid_t child_pids[BUF_SIZE];
 int child_count = 0;
 
-void sig_handler(int signum);
-void queue_init(struct queue* q, int capacity);
-void enqueue(struct queue* q, struct request* req);
-struct request* dequeue(struct queue* q);
-char** getFilesInDirectory(const char* dirname); 
-void err_exit(const char *err);
-void handle_client_request(struct request* req, pid_t* child_pids, int* child_count, int server_fifo_fd, int client_id);
-
-
-
 int main(int argc, char* argv[]) {
+    pid_t last_pid;
     int server_fifo_fd, client_fifo_fd, num_read, num_write;
     int server_fd, dummy_fd, client_fd, client_id, client_max;
     char buf[BUF_SIZE];
-    int shm_fd;
-    void* shm_ptr;
-    sem_t sem;
     struct sigaction sa;
     
     sa.sa_flags = SA_SIGINFO | SA_RESTART;
@@ -43,8 +30,7 @@ int main(int argc, char* argv[]) {
 
     char* dir_name = argv[1];
     int max_clients = atoi(argv[2]);
-    struct queue request_queue;
-    queue_init(&request_queue, max_clients);
+    struct Queue* queue = createQueue(max_clients);
     
 
     /* Create the server folder if it doesn't exist */
@@ -93,6 +79,7 @@ int main(int argc, char* argv[]) {
     printf(">> Server FIFO opened\n");
 
     client_id = 0;
+    last_pid = 0;
     // Handle the client's requests
     while (1) {
         // Read the client's request from the server FIFO
@@ -107,9 +94,17 @@ int main(int argc, char* argv[]) {
             free(req);
             continue;
         }
-        // Handle the client's request
-        ++client_id;
-        handle_client_request(req, child_pids, &child_count, server_fifo_fd, client_id);
+        enqueue(queue, req);
+        while (!isEmpty(queue)) {
+            struct request* req = dequeue(queue);
+            // Handle the client's request
+            if(req->pid != last_pid){
+                ++client_id;
+                printf(">> Child PID: %d connected as client%d\n", req->pid, client_id);
+            }
+            last_pid = req->pid;
+            handle_client_request(req, child_pids, &child_count, server_fifo_fd, client_id);
+        }
     }
 
     // Clean up
@@ -119,12 +114,67 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
+void handle_command(char* response, const char* command) {
+    if (strcmp(command, "help") == 0) {
+        strcpy(response, "help, list, readF, writeT, upload, download, archServer, quit, killServer");
+    } else if (strcmp(command, "list") == 0) {
+        strcpy(response, "Displaying the list of files in Servers directory...");
+    } else if (strncmp(command, "readF", 5) == 0) {
+        strcpy(response, "Displaying the # line of the file...");
+    } else if (strncmp(command, "writeT", 6) == 0) {
+        strcpy(response, "Writing to the #th line the file...");
+    } else if (strncmp(command, "upload", 6) == 0) {
+        strcpy(response, "Uploading the file...");
+    } else if (strncmp(command, "download", 8) == 0) {
+        strcpy(response, "Downloading the file...");
+    } else if (strncmp(command, "archServer", 10) == 0) {
+        strcpy(response, "Archiving the server files...");
+    } else if (strcmp(command, "killServer") == 0) {
+        strcpy(response, "Killing the server...");
+    } else if (strcmp(command, "quit") == 0) {
+        strcpy(response, "Quitting...");
+    } else {
+        strcpy(response, "Invalid command");
+    }
+}
+
 void handle_client_request(struct request* req, pid_t* child_pids, int* child_count, int server_fifo_fd, int client_id) {
+    // // Create a shared memory object
+    // int shm_fd = shm_open("/my_shm", O_CREAT | O_RDWR, 0666);
+    // if (shm_fd == -1) {
+    //     perror("shm_open");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    // // Set the size of the shared memory object
+    // if (ftruncate(shm_fd, sizeof(sem_t)) == -1) {
+    //     perror("ftruncate");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    // // Map the shared memory object into our address space
+    // sem_t* semaphore = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    // if (semaphore == MAP_FAILED) {
+    //     perror("mmap");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    // Initialize the semaphore
+    // if (sem_init(semaphore, 1, 1) == -1) {
+    //     perror("sem_init");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    if(sem_init(&sem, 1, 1) == -1){
+        perror("sem_init");
+        exit(EXIT_FAILURE);
+    }
+
     // Fork a new process for each client
     pid_t pid = fork();
     if (pid == 0) {
-        // Child process: handle the client's request
-
+        // Wait for the semaphore
+        sem_wait(&sem);
         // Create the client FIFO name
         char client_fifo[BUF_SIZE];
         snprintf(client_fifo, sizeof(client_fifo), CLIENT_FIFO_TEMP, req->pid);
@@ -136,9 +186,10 @@ void handle_client_request(struct request* req, pid_t* child_pids, int* child_co
             free(req);
             return;
         }
-        printf(">> Child PID: %d connected as client%d\n", req->pid, client_id);
 
-        char response[BUF_SIZE] = "Hello from server";
+        // Handle the client's request
+        char response[BUF_SIZE];
+        handle_command(response, req->data);
 
         if (write(client_fd, response, sizeof(response)) != sizeof(response)) {
             perror("write");
@@ -146,15 +197,17 @@ void handle_client_request(struct request* req, pid_t* child_pids, int* child_co
 
         // Close the client FIFO
         close(client_fd);
-        close(server_fifo_fd);
 
-        printf(">> client%d disconnected\n", client_id);
+        if (strcmp(response, "Quitting...") == 0) {
+            // Exit the child process
+            printf(">> client%d disconnected\n", client_id);
+            // Free the request
+            free(req);
+            // Exit the child process
+            exit(EXIT_SUCCESS);
+        }        
 
-        // Free the request
-        free(req);
-
-        // Exit the child process
-        exit(EXIT_SUCCESS);
+        sem_post(&sem);
     } else if (pid > 0) {
         // Parent process: do nothing, wait for the next client
         int status;
@@ -165,6 +218,24 @@ void handle_client_request(struct request* req, pid_t* child_pids, int* child_co
         perror("fork");
         exit(EXIT_FAILURE);
     }
+
+    // // Unmap the shared memory object
+    // if (munmap(semaphore, sizeof(sem_t)) == -1) {
+    //     perror("munmap");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    // // Close the shared memory object
+    // if (close(shm_fd) == -1) {
+    //     perror("close");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    // // Remove the shared memory object
+    // if (shm_unlink("/my_shm") == -1) {
+    //     perror("shm_unlink");
+    //     exit(EXIT_FAILURE);
+    // }
 }
 
 
@@ -212,35 +283,42 @@ void sig_handler(int signum) {
     exit(EXIT_SUCCESS);
 }
 
-void queue_init(struct queue* q, int capacity) {
-    q->capacity = capacity;
-    q->front = q->size = 0;
-    q->rear = capacity - 1;
-}
-
-void enqueue(struct queue* q, struct request* req) {
-    if (q->size == q->capacity) {
-        fprintf(stderr, "Queue is full\n");
-        return;
-    }
-    q->rear = (q->rear + 1) % q->capacity;
-    q->elements[q->rear] = req;
-    q->size++;
-}
-
-struct request* dequeue(struct queue* q) {
-    if (q->size == 0) {
-        fprintf(stderr, "Queue is empty\n");
-        return NULL;
-    }
-    struct request* req = q->elements[q->front];
-    q->front = (q->front + 1) % q->capacity;
-    q->size--;
-    return req;
-}
-
 void err_exit(const char *err) 
 {
     perror(err);
     exit(EXIT_FAILURE);
+}
+
+struct Queue* createQueue(unsigned capacity) {
+    struct Queue* queue = (struct Queue*) malloc(sizeof(struct Queue));
+    queue->capacity = capacity;
+    queue->front = queue->size = 0; 
+    queue->rear = capacity - 1;
+    queue->array = (struct request**) malloc(queue->capacity * sizeof(struct request*));
+    return queue;
+}
+
+int isFull(struct Queue* queue) {
+    return (queue->size == queue->capacity);
+}
+
+int isEmpty(struct Queue* queue) {
+    return (queue->size == 0);
+}
+
+void enqueue(struct Queue* queue, struct request* item) {
+    if (isFull(queue))
+        return;
+    queue->rear = (queue->rear + 1) % queue->capacity;
+    queue->array[queue->rear] = item;
+    queue->size = queue->size + 1;
+}
+
+struct request* dequeue(struct Queue* queue) {
+    if (isEmpty(queue))
+        return NULL;
+    struct request* item = queue->array[queue->front];
+    queue->front = (queue->front + 1) % queue->capacity;
+    queue->size = queue->size - 1;
+    return item;
 }

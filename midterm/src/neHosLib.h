@@ -46,6 +46,8 @@
 
 #define LOG_LEN 512
 
+#define MAX_QUEUE_SIZE 100
+
 enum req_cmd {HELP, LIST, READ_F, WRITE_T, UPLOAD, DOWNLOAD, QUIT, KILL_SERVER};
 
 enum resp_status {RESP_OK, RESP_ERROR, RESP_PART, RESP_CONT, RESP_APPROVE, RESP_CONNECT, RESP_DISCONNECT};
@@ -55,18 +57,33 @@ struct request {
     char data[BUF_SIZE];  // Request data
 };
 
-struct queue {
-    int front;
-    int rear;
-    int capacity;
-    int size;
-    struct request **elements;
+struct response {
+    int status;  // Response status
+    char data[BUF_SIZE];  // Response data
 };
+
+struct Queue {
+    int front, rear, size;
+    unsigned capacity;
+    struct request** array;
+};
+
+sem_t sem;
 
 struct pid_list {
     int size;
     int capacity;
     pid_t *pids;
 };
+
+void sig_handler(int signum);
+void err_exit(const char *err);
+void handle_client_request(struct request* req, pid_t* child_pids, int* child_count, int server_fifo_fd, int client_id);
+void handle_command(char* response, const char* command); 
+struct Queue* createQueue(unsigned capacity);
+int isFull(struct Queue* queue);
+int isEmpty(struct Queue* queue);
+void enqueue(struct Queue* queue, struct request* item);
+struct request* dequeue(struct Queue* queue);
 
 #endif
