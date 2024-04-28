@@ -4,12 +4,16 @@
 #define MAX_FILES 100
 #define SHM_NAME "/shm"
 #define SEM_NAME "/sem"
+#define SHM_SIZE 4096
 FILE* log_file = NULL;
 struct Queue* child_pids;
 
 int child_count = 0;
 int max_clients, server_fifo_fd, server_fd;
 sem_t sem;
+int shm_fd;
+SharedData* shared_data;
+
 
 int main(int argc, char* argv[]) {
     pid_t last_pid;
@@ -34,8 +38,32 @@ int main(int argc, char* argv[]) {
     char* dir_name = argv[1];
     max_clients = atoi(argv[2]);
     child_pids = createQueue(max_clients);
-    
 
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+
+    // Resize the shared memory object
+    if (ftruncate(shm_fd, sizeof(SharedData)) == -1) {
+        perror("ftruncate");
+        exit(EXIT_FAILURE);
+    }
+
+    // Memory map the shared object
+    shared_data = mmap(NULL, sizeof(SharedData), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (shared_data == MAP_FAILED) {
+        perror("mmap");
+        exit(EXIT_FAILURE);
+    }
+
+    // Initialize the semaphore
+    if (sem_init(&shared_data->sem, 1, 1) == -1) {
+        perror("sem_init");
+        exit(EXIT_FAILURE);
+    }
+    
     /* Create the server folder if it doesn't exist */
     if ((mkdir(dir_name, S_IRWXU | S_IWUSR | S_IRUSR | S_IXUSR | S_IWGRP | S_IRGRP)) == -1 && errno != EEXIST)
         err_exit("mkdir");
@@ -81,10 +109,8 @@ int main(int argc, char* argv[]) {
 
     printf(">> Server FIFO opened\n");
     last_pid = 0;
-    // Handle the client's requests
-    // Declare and initialize the mutex
-    // pthread_mutex_t lock;
-    // pthread_mutex_init(&lock, NULL);
+    // Initialize child_count
+    shared_data->child_count = 0;
 
     while (1) {
         struct request* req = malloc(sizeof(struct request));
@@ -97,15 +123,14 @@ int main(int argc, char* argv[]) {
         if (numRead <= 0) {
             if (numRead == 0) {
                 fprintf(stderr, "Unexpected EOF\n");
+                sleep(1);
+                continue;
             } else {
                 perror("read");
             }
             free(req);
             break;
         }
-
-        // Lock the mutex before checking the number of connected clients
-        // pthread_mutex_lock(&lock);
 
         // Enqueue the incoming request
         enqueue(child_pids, req);
@@ -115,39 +140,36 @@ int main(int argc, char* argv[]) {
 
         // Handle connection request
         if (req->type == CONNECT || req->type == TRY_CONNECT) {
-            if (child_count + 1 > max_clients) {
-                printf(">> Connection request PID %d… Que FULL \n", req->pid);
+            sem_wait(&shared_data->sem);
+            if (shared_data->child_count >= max_clients) {
+                printf(">> Connection request PID %d… Queue FULL \n", req->pid);
                 send_connect_response(req->pid, true);
-                // pthread_mutex_unlock(&lock);
-                free(dequeue(child_pids));
-                child_count--;
+                sem_post(&shared_data->sem);
+                free(req); // Ensure the request is freed if not processed
                 continue;
             }
-            req->client_number = child_count + 1;
+            req->client_number = ++(shared_data->child_count);
+            
+            sem_post(&shared_data->sem);
             printf(">> Child PID: %d connected as client%d\n", req->pid, req->client_number);
             send_connect_response(req->pid, false);
-            child_count++; // Increment only after successful connection
-            // pthread_mutex_unlock(&lock);
+            free(req); // Free the request after handling
             continue;
         }
 
-        // Unlock the mutex after handling the connection request
-        // pthread_mutex_unlock(&lock);
 
         // Handle command request
         if (req->type == COMMAND) {
-            handle_client_request(req, child_pids, &child_count, server_fifo_fd);
+            handle_client_request(req, server_fifo_fd);
             last_pid = req->pid;  // Track the last PID for any necessary action
         }
     }
-
-    // Destroy the mutex
-    // pthread_mutex_destroy(&lock);
 
     // Clean up
     close(server_fifo_fd);
     unlink(server_fifo);
     fclose(log_file);
+    // Clean up resources
     return 0;
 }
 
@@ -192,29 +214,22 @@ void handle_command(char* response, const char* command) {
     }
 }
 
-void handle_client_request(struct request* req, pid_t* child_pids, int* child_count, int server_fifo_fd) {
-    if(sem_init(&sem, 1, 1) == -1){
-        perror("sem_init");
-        exit(EXIT_FAILURE);
-    }
-
+void handle_client_request(struct request* req,  int server_fifo_fd) {
     // Fork a new process for each client
     pid_t pid = fork();
-    if (pid == 0) {
-
+    if (pid == 0) {  // Child process
+        // Wait for the semaphore to ensure exclusive access
+        sem_wait(&shared_data->sem);
         
-        // Wait for the semaphore
-        sem_wait(&sem);
-        // Create the client FIFO name
+        // Create the client FIFO name and open it
         char client_fifo[BUF_SIZE];
         snprintf(client_fifo, sizeof(client_fifo), CLIENT_FIFO_TEMP, req->pid);
-
-        // Open the client FIFO for writing
         int client_fd = open(client_fifo, O_WRONLY);
         if (client_fd == -1) {
             perror("open");
-            free(req);
-            return;
+            sem_post(&shared_data->sem);  // Release semaphore before exiting on failure
+            free(req); // Free the request memory
+            exit(EXIT_FAILURE);
         }
 
         // Handle the client's request
@@ -226,31 +241,30 @@ void handle_client_request(struct request* req, pid_t* child_pids, int* child_co
             perror("write");
         }
 
-        // Close the client FIFO
-        close(client_fd);
+        close(client_fd);  // Close the FIFO
 
+        // Check if client sent a "Quitting..." command
         if (strcmp(resp.data, "Quitting...") == 0) {
-            // Exit the child process
+            shared_data->child_count--;  // Decrement child count
             printf(">> client%d disconnected\n", req->client_number);
-            unlink(client_fifo);
-            // pthread_mutex_lock(&lock);
-            (*child_count)--;
-            // pthread_mutex_unlock(&lock);
-            // Exit the child process
+            sem_post(&shared_data->sem);  // Release semaphore before exiting
+            free(req); // Free the request memory
             exit(EXIT_SUCCESS);
-        }      
-        sem_post(&sem);
-    } else if (pid > 0) {
-        // Parent process: do nothing, wait for the next client
+        }
+
+        sem_post(&shared_data->sem);  // Release semaphore if not exiting
+        free(req);  // Free the request memory on exit of command handling
+        exit(EXIT_SUCCESS);
+    } else if (pid > 0) {  // Parent process
         int status;
-        waitpid(pid, &status, WNOHANG);
-        free(req);
+        waitpid(pid, &status, WNOHANG);  // Non-blocking wait
+        free(req);  // Free the request memory
     } else {
         perror("fork");
+        free(req); // Ensure the request is freed on fork failure
         exit(EXIT_FAILURE);
     }
 }
-
 
 void sig_handler(int signum) {
     int pid;
@@ -264,17 +278,18 @@ void sig_handler(int signum) {
             break;
         case SIGCHLD:
             while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-                sem_wait(&sem);
                 for (int i = 0; i < child_count; i++) {
                     if (child_pids->array[i]->pid == pid) {
                         kill(child_pids->array[i]->pid, SIGTERM);
                         printf("Child PID %d terminated.\n", pid);
-                        child_count--; // Decrement child_count when a child process terminates
+                        sem_wait(&sem);
+                        shared_data->child_count--; // Decrement child_count when a child process terminates
+                        sem_post(&sem);
                         break;
                     }
                 }
-                sem_post(&sem);
             }
+            break;
         default:
             fprintf(stderr, "\nHandling signal: %d\n", signum);    
             break;
@@ -283,6 +298,10 @@ void sig_handler(int signum) {
     // Close server FIFO
     close(server_fifo_fd);
     // unlink(server_fifo);
+    munmap(shared_data, sizeof(SharedData));
+    close(shm_fd);
+    shm_unlink(SHM_NAME);
+    sem_destroy(&shared_data->sem);
 
     // Ensure the log file is created properly
     if (log_file != NULL) {
@@ -318,18 +337,21 @@ int isEmpty(struct Queue* queue) {
 }
 
 void enqueue(struct Queue* queue, struct request* item) {
-    if (isFull(queue))
+    if (isFull(queue)) {
+        // Optionally handle the error or log it
         return;
+    }
     queue->rear = (queue->rear + 1) % queue->capacity;
     queue->array[queue->rear] = item;
-    queue->size = queue->size + 1;
+    queue->size++;
 }
 
 struct request* dequeue(struct Queue* queue) {
-    if (isEmpty(queue))
+    if (isEmpty(queue)) {
         return NULL;
+    }
     struct request* item = queue->array[queue->front];
     queue->front = (queue->front + 1) % queue->capacity;
-    queue->size = queue->size + 1;
+    queue->size--;
     return item;
 }

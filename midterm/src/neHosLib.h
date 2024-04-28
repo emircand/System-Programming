@@ -58,6 +58,12 @@ struct request {
     int client_number; // Client index
 };
 
+typedef struct {
+    sem_t sem;
+    int child_count;
+} SharedData;
+
+
 struct response {
     int status;
     char data[BUF_SIZE];
@@ -77,7 +83,7 @@ struct pid_list {
 
 void sig_handler(int signum);
 void err_exit(const char *err);
-void handle_client_request(struct request* req, pid_t* child_pids, int* child_count, int server_fifo_fd);
+void handle_client_request(struct request* req,  int server_fifo_fd);
 void handle_command(char* response, const char* command); 
 struct Queue* createQueue(unsigned capacity);
 int isFull(struct Queue* queue);
