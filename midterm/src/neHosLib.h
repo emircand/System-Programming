@@ -44,11 +44,11 @@
 
 #define MAX_QUEUE_SIZE 100
 
-enum req_cmd {HELP, LIST, READ_F, WRITE_T, UPLOAD, DOWNLOAD, QUIT, KILL_SERVER, R_CONNECT, R_TRY_CONNECT};
+enum req_cmd {HELP, LIST, READ_F, WRITE_T, UPLOAD, DOWNLOAD, QUIT, KILL_SERVER};
 
 enum resp_status {RESP_OK, RESP_ERROR, RESP_CONNECT, RESP_DISCONNECT};
 
-enum req_type {CONNECT, COMMAND};
+enum req_type {CONNECT, COMMAND, TRY_CONNECT};
 
 struct request {
     pid_t pid;  // Client PID

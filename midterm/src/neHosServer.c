@@ -114,10 +114,13 @@ int main(int argc, char* argv[]) {
         req = dequeue(child_pids);
 
         // Handle connection request
-        if (req->type == CONNECT) {
+        if (req->type == CONNECT || req->type == TRY_CONNECT) {
             if (child_count + 1 > max_clients) {
+                printf(">> Connection request PID %d… Que FULL \n", req->pid);
                 send_connect_response(req->pid, true);
                 // pthread_mutex_unlock(&lock);
+                free(dequeue(child_pids));
+                child_count--;
                 continue;
             }
             req->client_number = child_count + 1;
@@ -327,6 +330,6 @@ struct request* dequeue(struct Queue* queue) {
         return NULL;
     struct request* item = queue->array[queue->front];
     queue->front = (queue->front + 1) % queue->capacity;
-    queue->size = queue->size - 1;
+    queue->size = queue->size + 1;
     return item;
 }

@@ -4,9 +4,11 @@
 sem_t sem;
 
 void connect_to_server(int server_fd, bool wait);
+void interact_with_server(int server_fd, const char* client_fifo, enum req_type type);
 
 int main(int argc, char *argv[]) {
     int client_fd, server_fd;
+    bool try_again = false;
     sem_init(&sem, 0, 1);
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <Connect/tryConnect> ServerPID\n", argv[0]);
@@ -20,7 +22,16 @@ int main(int argc, char *argv[]) {
     // Fill the request structure
     req.pid = getpid();
     strcpy(req.data, argv[1]);
-    req.type = CONNECT;
+    if(strcmp(argv[1], "Connect") == 0){
+        req.type = CONNECT;
+        try_again = true;
+    } else if(strcmp(argv[1], "tryConnect") == 0){
+        req.type = TRY_CONNECT;
+        try_again = false;
+    } else {
+        fprintf(stderr, "Usage: %s <Connect/tryConnect> ServerPID\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
 
 
     // Create the client FIFO
@@ -42,8 +53,19 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    connect_to_server(server_fd, true);
-    req.type = COMMAND;
+    connect_to_server(server_fd, try_again);
+
+    // Close the server FIFO
+    close(server_fd);
+    unlink(client_fifo);
+    sem_destroy(&sem);
+
+    return 0;
+}
+
+void interact_with_server(int server_fd, const char* client_fifo, enum req_type type) {
+    struct request req = { .pid = getpid(), .data = {0}, .type = type};
+
     while(1){
         //Wait for user input
         printf(">>Enter a command: ");
@@ -63,7 +85,7 @@ int main(int argc, char *argv[]) {
         printf(">>Request sent to server\n");
 
         // Open the client FIFO for reading
-        client_fd = open(client_fifo, O_RDONLY);
+        int client_fd = open(client_fifo, O_RDONLY);
         if (client_fd == -1) {
             perror("open");
             exit(EXIT_FAILURE);
@@ -84,19 +106,16 @@ int main(int argc, char *argv[]) {
             break;
         }
     }
-
-    // Close the server FIFO
-    close(server_fd);
-    unlink(client_fifo);
-    sem_destroy(&sem);
-
-    return 0;
 }
 
 // Send a "Connect" or "tryConnect" request
 void connect_to_server(int server_fd, bool wait) {
     struct request req = { .pid = getpid(), .data = {0} };
-    strcpy(req.data, wait ? "Connect" : "tryConnect");
+    if (wait) {
+        req.type = CONNECT;
+    } else {
+        req.type = TRY_CONNECT;
+    }
 
     write(server_fd, &req, sizeof(req));
 
@@ -115,28 +134,32 @@ void connect_to_server(int server_fd, bool wait) {
             perror("read");
             exit(EXIT_FAILURE);
         }
-        close(client_fd);
         switch (resp.status) {
             case RESP_CONNECT:
                 printf("Connected to the server.\n");
+                close(client_fd);
+                interact_with_server(server_fd, client_fifo, COMMAND);
                 return;
             case RESP_ERROR:
                 if (strcmp(resp.data, "Server full") == 0) {
-                    if (wait) {
-                        printf("Server is full, waiting for a spot to become available...\n");
+                    if (wait && req.type == CONNECT) {
+                        printf(">>Server is full, waiting 5 seconds for a spot to become available...\n");
                         sleep(5); // wait for a spot to become available
                         connect_to_server(server_fd, true);
                     } else {
-                        printf("Server is full, exiting.\n");
+                        printf(">>Server is full, exiting.\n");
+                        close(client_fd); // Close the client_fd before exiting
                         exit(EXIT_FAILURE);
                     }
                 } else {
                     printf("Unexpected response from server: status=%d, data=%s\n", resp.status, resp.data);
+                    close(client_fd); // Close the client_fd before exiting
                     exit(EXIT_FAILURE);
                 }
                 break;
             default:
                 printf("Unexpected response from server: status=%d, data=%s\n", resp.status, resp.data);
+                close(client_fd); // Close the client_fd before exiting
                 exit(EXIT_FAILURE);
         }
     }
