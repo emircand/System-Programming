@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
     printf("Server FIFO: %s\n", server_fifo);
 
     // Open the server FIFO for writing
-    server_fd = open(server_fifo, O_RDWR);
+    server_fd = open(server_fifo, O_WRONLY);
     if (server_fd == -1) {
         perror("open");
         exit(EXIT_FAILURE);

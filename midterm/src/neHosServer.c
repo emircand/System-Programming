@@ -9,7 +9,9 @@ FILE* log_file = NULL;
 struct Queue* child_pids;
 
 int child_count = 0;
-int max_clients, server_fifo_fd, server_fd;
+int max_clients;
+int server_fifo_fd, client_fifo_fd, num_read, num_write;
+int server_fd, dummy_fd, client_fd, log_fd;
 sem_t sem;
 int shm_fd;
 SharedData* shared_data;
@@ -17,17 +19,10 @@ SharedData* shared_data;
 
 int main(int argc, char* argv[]) {
     pid_t last_pid;
-    int server_fifo_fd, client_fifo_fd, num_read, num_write;
-    int server_fd, dummy_fd, client_fd;
-    char buf[BUF_SIZE];
-    struct sigaction sa;
     
-    sa.sa_flags = SA_SIGINFO | SA_RESTART;
-    sa.sa_handler = &sig_handler;
-    if (sigemptyset(&sa.sa_mask) == -1 || 
-        sigaction(SIGINT, &sa, NULL) == -1 || 
-        sigaction(SIGTERM, &sa, NULL) == -1)
-        perror("sa_handle");
+    char buf[BUF_SIZE];
+    
+    setup_signals();
 
 
     if (argc != 3) {
@@ -72,11 +67,14 @@ int main(int argc, char* argv[]) {
     if ((dir_name = opendir(argv[1])) == NULL)
         err_exit("opendir");
 
-
     // Create a log file
-    FILE* log_file = fopen("log.txt", "w");
-    if (log_file == NULL) {
-        perror("fopen");
+    char log_path[BUF_SIZE];
+    strcpy(log_path, argv[1]);
+    strcat(log_path, "/log.txt");
+
+    log_fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (log_fd == -1) {
+        perror("open");
         exit(EXIT_FAILURE);
     }
 
@@ -152,6 +150,9 @@ int main(int argc, char* argv[]) {
             
             sem_post(&shared_data->sem);
             printf(">> Child PID: %d connected as client%d\n", req->pid, req->client_number);
+            char message[BUF_SIZE];
+            snprintf(message, BUF_SIZE, "Client PID: %d connected as client%d", req->pid, req->client_number);
+            write_log(message);
             send_connect_response(req->pid, false);
             free(req); // Free the request after handling
             continue;
@@ -171,6 +172,15 @@ int main(int argc, char* argv[]) {
     fclose(log_file);
     // Clean up resources
     return 0;
+}
+
+
+void write_log(const char* message) {
+    char buf[BUF_SIZE];
+    time_t now = time(NULL);
+    struct tm* tm_info = localtime(&now);
+    strftime(buf, BUF_SIZE, "%Y-%m-%d %H:%M:%S", tm_info);
+    dprintf(log_fd, "[%s] %s\n", buf, message);
 }
 
 void send_connect_response(pid_t client_pid, bool wait) {
@@ -245,8 +255,12 @@ void handle_client_request(struct request* req,  int server_fifo_fd) {
 
         // Check if client sent a "Quitting..." command
         if (strcmp(resp.data, "Quitting...") == 0) {
+            
+            char message[BUF_SIZE];
+            snprintf(message, BUF_SIZE, "Child %d - Client%d disconnected", req->pid, shared_data->child_count);
+            write_log(message);
+            printf("%s\n", message);
             shared_data->child_count--;  // Decrement child count
-            printf(">> client%d disconnected\n", req->client_number);
             sem_post(&shared_data->sem);  // Release semaphore before exiting
             free(req); // Free the request memory
             exit(EXIT_SUCCESS);
@@ -266,51 +280,68 @@ void handle_client_request(struct request* req,  int server_fifo_fd) {
     }
 }
 
-void sig_handler(int signum) {
-    int pid;
-    int status;
+void setup_signals() {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));  // Initialize the structure to zero
+    sa.sa_handler = sig_handler; // Pointer to signal handler function
+    sigemptyset(&sa.sa_mask);    // Initialize the signal mask
+    sa.sa_flags = SA_RESTART;    // To handle interrupted system calls
 
-    switch (signum) {
-        case SIGTERM:
-        case SIGQUIT:
-        case SIGINT:
-            fprintf(stderr, "\nHandling signal: %d\n", signum);    
-            break;
-        case SIGCHLD:
-            while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-                for (int i = 0; i < child_count; i++) {
-                    if (child_pids->array[i]->pid == pid) {
-                        kill(child_pids->array[i]->pid, SIGTERM);
-                        printf("Child PID %d terminated.\n", pid);
-                        sem_wait(&sem);
-                        shared_data->child_count--; // Decrement child_count when a child process terminates
-                        sem_post(&sem);
-                        break;
-                    }
-                }
-            }
-            break;
-        default:
-            fprintf(stderr, "\nHandling signal: %d\n", signum);    
-            break;
+    // Set up signal handlers for SIGINT, SIGTERM, SIGQUIT, and SIGCHLD:
+    if (sigaction(SIGINT, &sa, NULL) == -1 ||
+        sigaction(SIGTERM, &sa, NULL) == -1 ||
+        sigaction(SIGQUIT, &sa, NULL) == -1 ||
+        sigaction(SIGCHLD, &sa, NULL) == -1) {
+        perror("Failed to set signal handlers");
+        exit(EXIT_FAILURE);
     }
+}
 
-    // Close server FIFO
-    close(server_fifo_fd);
-    // unlink(server_fifo);
+void cleanup() {
+    // Close and unlink server FIFO
+    if (server_fifo_fd >= 0) close(server_fifo_fd);
+    if (dummy_fd >= 0) close(dummy_fd);
+
+    char buf[BUF_SIZE];
+    sprintf(buf, SERVER_FIFO_TEMP, getpid());
+    unlink(buf);
+
+    // Close log file
+    close(log_fd);
+
+    // Unmap and unlink shared memory
     munmap(shared_data, sizeof(SharedData));
     close(shm_fd);
     shm_unlink(SHM_NAME);
+
+    // Destroy semaphore
     sem_destroy(&shared_data->sem);
 
-    // Ensure the log file is created properly
-    if (log_file != NULL) {
-        fclose(log_file);
-    }
+    printf("Cleanup complete, server shutting down.\n");
+    exit(EXIT_SUCCESS);  // Ensure the process exits successfully
+}
 
-    printf(">> bye\n");
-    // Exit
-    exit(EXIT_SUCCESS);
+void sig_handler(int signum) {
+    // Depending on the signal type, perform appropriate actions:
+    write_log("Server Shutting Down");
+    switch (signum) {
+        case SIGINT:
+        case SIGTERM:
+        case SIGQUIT:
+            // Handle graceful shutdown:
+            cleanup();
+            break;
+        case SIGCHLD:
+            // Reap zombie processes and adjust child count:
+            while (waitpid(-1, NULL, WNOHANG) > 0) {
+                // sem_wait(&shared_data->sem);
+                // shared_data->child_count--; // Safely decrement child count
+                // sem_post(&shared_data->sem);
+            }
+            break;
+        default:
+            fprintf(stderr, "Unhandled signal: %d\n", signum);
+    }
 }
 
 void err_exit(const char *err) 
