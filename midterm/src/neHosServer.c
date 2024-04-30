@@ -1,4 +1,6 @@
 #include "neHosLib.h"
+#include "queue.h"
+
 
 #define BUF_SIZE 1024
 #define MAX_FILES 100
@@ -11,10 +13,11 @@ struct Queue* child_pids;
 int child_count = 0;
 int max_clients;
 int server_fifo_fd, client_fifo_fd, num_read, num_write;
-int server_fd, dummy_fd, client_fd, log_fd;
+int server_fd, dummy_fd, client_fd, log_fd, dir_fd;
 sem_t sem;
 int shm_fd;
 SharedData* shared_data;
+DIR* dir;
 
 
 int main(int argc, char* argv[]) {
@@ -64,7 +67,7 @@ int main(int argc, char* argv[]) {
         err_exit("mkdir");
 
     /* Open server folder */
-    if ((dir_name = opendir(argv[1])) == NULL)
+    if ((dir = opendir(dir_name)) == NULL)
         err_exit("opendir");
 
     // Create a log file
@@ -161,7 +164,7 @@ int main(int argc, char* argv[]) {
 
         // Handle command request
         if (req->type == COMMAND) {
-            handle_client_request(req, server_fifo_fd);
+            handle_client_request(req, server_fifo_fd, dir);
             last_pid = req->pid;  // Track the last PID for any necessary action
         }
     }
@@ -173,7 +176,6 @@ int main(int argc, char* argv[]) {
     // Clean up resources
     return 0;
 }
-
 
 void write_log(const char* message) {
     char buf[BUF_SIZE];
@@ -200,31 +202,69 @@ void send_connect_response(pid_t client_pid, bool wait) {
     close(client_fd);
 }
 
-void handle_command(char* response, const char* command) {
+struct response handle_command(const char* command, DIR* dir) {
+    struct response resp = {RESP_OK, ""};
+
     if (strcmp(command, "help") == 0) {
-        strcpy(response, "help, list, readF, writeT, upload, download, archServer, quit, killServer");
+        strcpy(resp.data, "help, list, readF, writeT, upload, download, archServer, quit, killServer");
     } else if (strcmp(command, "list") == 0) {
-        strcpy(response, "Displaying the list of files in Servers directory...");
+        return cmd_list(client_fd, dir);
     } else if (strncmp(command, "readF", 5) == 0) {
-        strcpy(response, "Displaying the # line of the file...");
+        strcpy(resp.data, "Displaying the # line of the file...");
     } else if (strncmp(command, "writeT", 6) == 0) {
-        strcpy(response, "Writing to the #th line the file...");
+        strcpy(resp.data, "Writing to the #th line the file...");
     } else if (strncmp(command, "upload", 6) == 0) {
-        strcpy(response, "Uploading the file...");
+        strcpy(resp.data, "Uploading the file...");
     } else if (strncmp(command, "download", 8) == 0) {
-        strcpy(response, "Downloading the file...");
+        strcpy(resp.data, "Downloading the file...");
     } else if (strncmp(command, "archServer", 10) == 0) {
-        strcpy(response, "Archiving the server files...");
+        strcpy(resp.data, "Archiving the server files...");
     } else if (strcmp(command, "killServer") == 0) {
-        strcpy(response, "Killing the server...");
+        strcpy(resp.data, "Killing the server...");
     } else if (strcmp(command, "quit") == 0) {
-        strcpy(response, "Quitting...");
+        strcpy(resp.data, "Quitting...");
     } else {
-        strcpy(response, "Invalid command");
+        strcpy(resp.data, "Invalid command");
     }
+    return resp;
 }
 
-void handle_client_request(struct request* req,  int server_fifo_fd) {
+struct response cmd_list(int client_fd, DIR *server_dir) {
+    struct response resp;
+    struct dirent *entry;
+    char buf[BUF_SIZE];
+
+    memset(resp.data, 0, sizeof(resp.data));  // Initialize the buffer
+    resp.status = RESP_OK;
+
+    rewinddir(server_dir);  // Reset the directory stream to the beginning
+    printf(">> Listing files in the server directory\n");
+
+    while ((entry = readdir(server_dir)) != NULL) {
+        if (entry->d_type == DT_REG) {  // Only list regular files
+            if (strlen(resp.data) + strlen(entry->d_name) + 1 < sizeof(resp.data)) {
+                strcat(resp.data, entry->d_name);
+                strcat(resp.data, "\n");
+            } else {
+                // Handle buffer overflow case, maybe set an error or warning
+                strcpy(resp.data, "Error: Buffer overflow occurred");
+                resp.status = RESP_ERROR;
+                break;
+            }
+        }
+    }
+
+    // Send the list to the client
+    if (write(client_fd, &resp, sizeof(resp)) < 0) {
+        perror("write");
+        resp.status = RESP_ERROR;
+        strcpy(resp.data, "Failed to send list");
+    }
+
+    return resp;
+}
+
+void handle_client_request(struct request* req,  int server_fifo_fd, char* dir_name) {
     // Fork a new process for each client
     pid_t pid = fork();
     if (pid == 0) {  // Child process
@@ -244,8 +284,7 @@ void handle_client_request(struct request* req,  int server_fifo_fd) {
 
         // Handle the client's request
         struct response resp;
-        handle_command(resp.data, req->data);
-        resp.status = RESP_OK;
+        resp = handle_command(req->data, dir_name);
 
         if (write(client_fd, &resp, sizeof(resp)) != sizeof(resp)) {
             perror("write");
@@ -350,39 +389,4 @@ void err_exit(const char *err)
     exit(EXIT_FAILURE);
 }
 
-struct Queue* createQueue(unsigned capacity) {
-    struct Queue* queue = (struct Queue*) malloc(sizeof(struct Queue));
-    queue->capacity = capacity;
-    queue->front = queue->size = 0;
-    queue->rear = capacity - 1;
-    queue->array = (struct request**) malloc(queue->capacity * sizeof(struct request*));
-    return queue;
-}
 
-int isFull(struct Queue* queue) {
-    return (queue->size == queue->capacity);
-}
-
-int isEmpty(struct Queue* queue) {
-    return (queue->size == 0);
-}
-
-void enqueue(struct Queue* queue, struct request* item) {
-    if (isFull(queue)) {
-        // Optionally handle the error or log it
-        return;
-    }
-    queue->rear = (queue->rear + 1) % queue->capacity;
-    queue->array[queue->rear] = item;
-    queue->size++;
-}
-
-struct request* dequeue(struct Queue* queue) {
-    if (isEmpty(queue)) {
-        return NULL;
-    }
-    struct request* item = queue->array[queue->front];
-    queue->front = (queue->front + 1) % queue->capacity;
-    queue->size--;
-    return item;
-}

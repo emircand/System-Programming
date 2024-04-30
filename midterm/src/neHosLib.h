@@ -15,7 +15,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <pthread.h>
 
 #define SERVER_FIFO_TEMP "/tmp/server.%d.fifo"
 #define CLIENT_FIFO_TEMP "/tmp/client.%d.fifo"
@@ -69,27 +68,13 @@ struct response {
     char data[BUF_SIZE];
 };
 
-struct Queue {
-    int front, rear, size;
-    unsigned capacity;
-    struct request** array;
-};
-
-struct pid_list {
-    int size;
-    int capacity;
-    pid_t *pids;
-};
-
 void sig_handler(int signum);
 void err_exit(const char *err);
-void handle_client_request(struct request* req,  int server_fifo_fd);
-void handle_command(char* response, const char* command); 
-struct Queue* createQueue(unsigned capacity);
-int isFull(struct Queue* queue);
-int isEmpty(struct Queue* queue);
-void enqueue(struct Queue* queue, struct request* item);
-struct request* dequeue(struct Queue* queue);
+void handle_client_request(struct request* req,  int server_fifo_fd, char* dir_name);
+struct response handle_command(const char* command, DIR* dir);
+struct response cmd_list(int client_fd, DIR *server_dir); 
+
 void send_connect_response(pid_t client_pid, bool wait); 
+struct response handle_response(int client_fd);
 
 #endif

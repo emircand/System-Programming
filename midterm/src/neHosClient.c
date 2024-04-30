@@ -92,11 +92,7 @@ void interact_with_server(int server_fd, const char* client_fifo, enum req_type 
         }
 
         // Read the server's response from the client FIFO
-        struct response resp;
-        if (read(client_fd, &resp, sizeof(resp)) <= 0) {
-            perror("read");
-            exit(EXIT_FAILURE);
-        }
+        struct response resp = handle_response(client_fd);
         printf(">>Response from server: %s\n", resp.data);
 
         // Close the client FIFO
@@ -106,6 +102,25 @@ void interact_with_server(int server_fd, const char* client_fifo, enum req_type 
             break;
         }
     }
+}
+
+struct response handle_response(int client_fd) {
+    struct response resp;
+    ssize_t n = read(client_fd, &resp, sizeof(resp));
+    if (n < 0) {
+        perror("read");
+        exit(EXIT_FAILURE);
+    } else if (n == 0) {
+        printf("Server closed connection\n");
+        exit(EXIT_SUCCESS);
+    }
+
+    if (resp.status == RESP_ERROR) {
+        printf("Error: %s\n", resp.data);
+    } else {
+        printf(">>Response: %s\n", resp.data);
+    }
+    return resp;
 }
 
 // Send a "Connect" or "tryConnect" request
