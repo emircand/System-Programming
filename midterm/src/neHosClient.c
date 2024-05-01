@@ -1,10 +1,11 @@
 #include "neHosLib.h"
 #include <stdbool.h>
 
-sem_t sem;
-
 void connect_to_server(int server_fd, bool wait);
 void interact_with_server(int server_fd, const char* client_fifo, enum req_type type);
+sem_t file_sem, sem;
+int shm_fd;
+SharedData* shared_data;
 
 int main(int argc, char *argv[]) {
     int client_fd, server_fd;
@@ -19,7 +20,27 @@ int main(int argc, char *argv[]) {
     char client_fifo[256];
     char server_fifo[256];
 
-    // Fill the request structure
+    // Open a shared memory object.
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+
+    // Set the size of the shared memory object.
+    if (ftruncate(shm_fd, sizeof(SharedData)) == -1) {
+        perror("ftruncate");
+        exit(EXIT_FAILURE);
+    }
+
+    shared_data = mmap(NULL, sizeof(SharedData), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (shared_data == MAP_FAILED) {
+        perror("mmap");
+        exit(EXIT_FAILURE);
+    }
+    sem_init(&shared_data->sem, 1, 1);
+
+
     req.pid = getpid();
     strcpy(req.data, argv[1]);
     if(strcmp(argv[1], "Connect") == 0){
@@ -58,7 +79,8 @@ int main(int argc, char *argv[]) {
     // Close the server FIFO
     close(server_fd);
     unlink(client_fifo);
-    sem_destroy(&sem);
+    sem_destroy(&shared_data->sem);
+    munmap(shared_data, sizeof(SharedData));
 
     return 0;
 }
@@ -92,13 +114,11 @@ void interact_with_server(int server_fd, const char* client_fifo, enum req_type 
         }
 
         // Read the server's response from the client FIFO
-        struct response resp = handle_response(client_fd);
-        printf(">>Response from server: %s\n", resp.data);
+        struct response resp = handle_response(client_fd);        
 
         // Close the client FIFO
         close(client_fd);
-        if (strcmp(resp.data, "Quitting...") == 0) {
-            printf(">>bye...\n");
+        if(resp.status == RESP_QUIT){
             break;
         }
     }
@@ -119,7 +139,7 @@ struct response handle_response(int client_fd) {
         printf("Error: %s\n", resp.data);
     } else {
         printf(">>Response: %s\n", resp.data);
-    }
+    } 
     return resp;
 }
 
