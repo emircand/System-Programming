@@ -19,26 +19,8 @@
 #define SERVER_FIFO_TEMP "/tmp/server.%d.fifo"
 #define CLIENT_FIFO_TEMP "/tmp/client.%d.fifo"
 
-#define ERR_MSG_LEN 128
-
-#define LOG_FILE_TEMPLATE "nehoslog.%d.log"
-
-#define LOG_FILE_LEN (sizeof(LOG_FILE_TEMPLATE) + 20)
-
-#define REG_SERVER_FIFO_NAME_LEN (sizeof(REG_SERVER_FIFO_TEMPLATE) + 20)
-
-#define REQ_SERVER_FIFO_NAME_LEN (sizeof(REQ_SERVER_FIFO_TEMPLATE) + 20)
-
-#define CLIENT_FIFO_NAME_LEN (sizeof(CLIENT_FIFO_TEMPLATE) + 20)
-
 #define CMD_LEN 64
-
 #define CMD_ARG_MAX 32
-
-#define CWD_SIZE 256
-
-#define LOG_LEN 512
-
 #define MAX_QUEUE_SIZE 100
 
 #define BUF_SIZE 1024
@@ -79,7 +61,6 @@ struct response {
 typedef struct {
     char cmd[CMD_LEN];
     char args[CMD_ARG_MAX][BUF_SIZE];
-    char file_name[BUF_SIZE];
     int arg_count;
     enum req_cmd cmd_id;
 } Command;
@@ -89,14 +70,13 @@ void sig_handler(int signum);
 void err_exit(const char *err);
 void handle_client_request(struct request* req,  int server_fifo_fd, DIR* dir);
 struct response handle_command(const char* command, DIR* dir);
-struct response cmd_list(int client_fd, DIR *server_dir); 
+struct response cmd_list(DIR *server_dir);
 void write_log(const char* message);
 void handle_help(const char* command, struct response* resp);
 struct response handle_command(const char* command, DIR* dir);
 void parse_command(char* request, Command* cmd);
-char* readF(const char *filename, DIR *server_dir);
-char* readF_Line(const char *filename, int line_num);
-void handle_readF(char* cmd_args[], struct response* resp, int num_args); 
+char* readF(const char *filename, int *line_num);
+void handle_readF(Command cmd, struct response* resp);
 
 //Client functions
 void send_connect_response(pid_t client_pid, bool wait); 

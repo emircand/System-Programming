@@ -15,6 +15,7 @@ int max_clients;
 int server_fifo_fd, client_fifo_fd, num_read, num_write;
 int server_fd, dummy_fd, client_fd, log_fd, dir_fd;
 DIR* dir;
+char dir_path[BUF_SIZE];
 
 sem_t file_sem, sem;
 int shm_fd;
@@ -61,7 +62,8 @@ int main(int argc, char* argv[]) {
 
     // Create a log file
     char log_path[BUF_SIZE];
-    strcpy(log_path, argv[1]);
+    strcpy(dir_path, argv[1]);
+    strcpy(log_path, dir_path);
     strcat(log_path, "/log.txt");
 
     log_fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -109,6 +111,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+        // Read the request from the server FIFO
         ssize_t numRead = read(server_fifo_fd, req, sizeof(struct request));
         if (numRead <= 0) {
             if (numRead == 0) {
@@ -238,86 +241,158 @@ void handle_help(const char* command, struct response* resp) {
     }
 }
 
-void handle_readF(char* cmd_args[], struct response* resp, int num_args) {
-    if (num_args == 0) {
+void handle_readF(Command cmd, struct response* resp) {
+    printf("number of arguments: %d\n", cmd.arg_count);
+    if (cmd.arg_count == 0) {
         strcpy(resp->data, "Invalid number of arguments");
+        printf("Invalid number of arguments\n");
         resp->status = RESP_ERROR;
         return;
-    } else if (num_args == 1) {
-        char* filename = cmd_args[0];
-        strcpy(resp->data, readF(filename, dir));
+    } else if (cmd.arg_count == 1) {
+        char filename[MAX_FILES];
+        strcpy(filename, cmd.args[0]);
+        char file_contents[MAX_LINE_LEN];
+        strcpy(resp->data, readF(filename, NULL));
     } else {
-        char* filename = cmd_args[0];
-        int line_num = atoi(cmd_args[1]);
-        strcpy(resp->data, readF_Line(filename, line_num));
+        char filename[MAX_FILES];
+        strcpy(filename, cmd.args[0]);
+        int line_num = atoi(cmd.args[1]);
+        strcpy(resp->data, readF(filename, line_num));
     }
-
-    printf("resp->data: %s\n", resp->data);
 }
 
-char* readF(const char *filename, DIR *server_dir) {
-    printf("readF %s\n", filename);
-
+char* readF(const char *filename, int *line_num) {
     char full_path[PATH_MAX];
-    sprintf(full_path, "%s/%s", server_dir, filename);
-
-    sem_wait(&file_sem); // Wait for the semaphore
-
+    sprintf(full_path, "%s/%s", dir_path, filename);
+    sem_wait(&shared_data->file_sem); // Wait for the semaphore
     int fd = open(full_path, O_RDONLY);
     if (fd == -1) {
-        sem_post(&file_sem); // Release the semaphore
+        sem_post(&shared_data->file_sem); // Release the semaphore
         char* error_msg = strdup("Could not open file\n");
         return error_msg;
     }
-
-    char line[MAX_LINE_LEN];
-    ssize_t n;
-    char c;
-    char* file_contents = malloc(MAX_LINE_LEN);
-    int i = 0;
-    while ((n = read(fd, &c, 1)) > 0 && i < MAX_LINE_LEN - 1) {
-        file_contents[i] = c;
-        i++;
+    char* line = malloc(MAX_LINE_LEN);  // Dynamically allocate memory
+    if (line == NULL) {  // Check if malloc was successful
+        close(fd);
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return NULL;
     }
-    file_contents[i] = '\0';
-    close(fd);
-
-    sem_post(&file_sem); // Release the semaphore
-
-    return file_contents;
-}
-
-
-char* readF_Line(const char *filename, int line_num) {
-    int fd = open(filename, O_RDONLY);
-    if (fd == -1) {
-        char* error_msg = strdup("Could not open file\n");
-        return error_msg;
-    }
-
-    char line[MAX_LINE_LEN];
     int current_line = 0;
-    ssize_t n;
     char c;
-    // Read specific line
+    ssize_t n;
     int i = 0;
-    while ((n = read(fd, &c, 1)) > 0) {
-        if (c == '\n') {
-            current_line++;
-            if (current_line == line_num) {
-                line[i] = '\0';
-                close(fd);
-                return strdup(line);
+
+    if (line_num != NULL) {
+        while ((n = read(fd, &c, 1)) > 0) {
+            if (c == '\n') {
+                current_line++;
+                if (current_line == *line_num) {
+                    break;
+                }
+                i = 0;  // Reset the index for the new line
+            } else if (current_line == *line_num - 1) {
+                line[i] = c;
+                i++;
             }
-            i = 0;  // Reset the index for the next line
-        } else if (i < MAX_LINE_LEN - 1) {
-            line[i] = c;
-            i++;
+        }
+        if (current_line != *line_num) {
+            free(line);
+            line = NULL;
+        } else {
+            line[i] = '\0';  // Null-terminate the line
+        }
+    } else {
+        // Read the whole file
+        char buffer[1024];
+        while ((n = read(fd, buffer, sizeof(buffer) - 1)) > 0) {
+            buffer[n] = '\0';
+            strcat(line, buffer);
         }
     }
 
     close(fd);
-    return NULL;
+    sem_post(&shared_data->file_sem); // Release the semaphore
+    return line;
+}
+
+void handle_writeT(Command cmd, struct response* resp) {
+    char filename[MAX_FILES];
+    strcpy(filename, cmd.args[0]);
+    int line_num = atoi(cmd.args[1]);
+
+    if(cmd.arg_count == 2){
+        char str[MAX_LINE_LEN];
+        strcpy(str, cmd.args[1]);
+        if (writeT(filename, line_num, str) == -1) {
+            strcpy(resp->data, "Error writing to file");
+            resp->status = RESP_ERROR;
+        } else {
+            char message[BUF_SIZE];
+            sprintf(message, "Writing to the end of the file...");
+            strcpy(resp->data, message);
+        }
+    } else if (cmd.arg_count == 3) {
+        char str[MAX_LINE_LEN];
+        strcpy(str, cmd.args[2]);
+        if (writeT(filename, line_num, str) == -1) {
+            strcpy(resp->data, "Error writing to file");
+            resp->status = RESP_ERROR;
+        } else {
+            char message[BUF_SIZE];
+            sprintf(message, "Writing to the %dth line of the file...", line_num);
+            strcpy(resp->data, message);
+        }
+    } else {
+        strcpy(resp->data, "Invalid number of arguments");
+        resp->status = RESP_ERROR;
+    }
+}
+
+int writeT(const char *filename, int line_num, const char *str) {
+    char full_path[PATH_MAX];
+    sprintf(full_path, "%s/%s", dir_path, filename);
+    sem_wait(&shared_data->file_sem); // Wait for the semaphore
+    int fd = open(full_path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+    if (fd == -1) {
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;
+    }
+    char c;
+    ssize_t n;
+    int current_line = 1;
+    int i = 0;
+    if (line_num == 0){
+        lseek(fd, 0, SEEK_END);  // Move the file pointer to the end of the file
+    } else if (line_num > 0) {
+        while ((n = read(fd, &c, 1)) > 0) {
+            if (c == '\n') {
+                current_line++;
+                if (current_line == line_num) {
+                    break;
+                }
+                i = 0;  // Reset the index for the new str
+            }
+        }
+        if (current_line != line_num) {
+            close(fd);
+            sem_post(&shared_data->file_sem); // Release the semaphore
+            return -1;
+        }
+        lseek(fd, -1, SEEK_CUR);  // Move the file pointer back one byte
+    } else {
+        close(fd);
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;
+    }
+
+    char new_str[strlen(str) + 2];  // Create a new string that can hold the original string and a newline character
+    new_str[0] = '\n';  // Add a newline character to the beginning of the new string
+    strcpy(new_str + 1, str);  // Copy the original string to the new string, starting from the second character
+
+    write(fd, new_str, strlen(new_str));  // Write the new string
+    close(fd);
+    sem_post(&shared_data->file_sem); // Release the semaphore
+    return 0;
 }
 
 struct response handle_command(const char* command, DIR* dir) {
@@ -336,13 +411,11 @@ struct response handle_command(const char* command, DIR* dir) {
             strcpy(resp.data, "help, list, readF, writeT, upload, download, archServer, quit, killServer");
         }
     } else if (strcmp(command, "list") == 0) {
-        return cmd_list(client_fd, dir);
+        return cmd_list(dir);
     } else if (strncmp(command, "readF", 5) == 0) {
-        printf("readF command\n");
-        handle_readF(parsed_cmd.args, &resp, parsed_cmd.arg_count);
-        printf("resp->data: %s\n", resp.data);
+        handle_readF(parsed_cmd, &resp);
     } else if (strncmp(command, "writeT", 6) == 0) {
-        strcpy(resp.data, "Writing to the #th line the file...");
+        handle_writeT(parsed_cmd, &resp);
     } else if (strncmp(command, "upload", 6) == 0) {
         strcpy(resp.data, "Uploading the file...");
     } else if (strncmp(command, "download", 8) == 0) {
@@ -360,7 +433,7 @@ struct response handle_command(const char* command, DIR* dir) {
     return resp;
 }
 
-struct response cmd_list(int client_fd, DIR *server_dir) {
+struct response cmd_list(DIR *server_dir) {
     struct response resp;
     struct dirent *entry;
     char buf[BUF_SIZE];
@@ -369,7 +442,6 @@ struct response cmd_list(int client_fd, DIR *server_dir) {
     resp.status = RESP_OK;
 
     rewinddir(server_dir);  // Reset the directory stream to the beginning
-    printf(">> Listing files in the server directory\n");
 
     while ((entry = readdir(server_dir)) != NULL) {
         if (entry->d_type == DT_REG) {  // Only list regular files
@@ -384,14 +456,6 @@ struct response cmd_list(int client_fd, DIR *server_dir) {
             }
         }
     }
-
-    // Send the list to the client
-    if (write(client_fd, &resp, sizeof(resp)) < 0) {
-        perror("write");
-        resp.status = RESP_ERROR;
-        strcpy(resp.data, "Failed to send list");
-    }
-
     return resp;
 }
 
@@ -426,11 +490,27 @@ void parse_command(char* request, Command* cmd) {
         printf("Arg %d: %s\n", i, cmd->args[i]);
     }
 
-    // The command ID and file name will need to be set based on your specific requirements
-    // For example:
-    // cmd->cmd_id = ...;
-    // strncpy(cmd->file_name, ..., BUF_SIZE - 1);
-    // cmd->file_name[BUF_SIZE - 1] = '\0';  // Ensure null termination
+    // Determine the command ID based on the command string
+    if (strcmp(cmd->cmd, "help") == 0) {
+        cmd->cmd_id = HELP;
+    } else if (strcmp(cmd->cmd, "list") == 0) {
+        cmd->cmd_id = LIST;
+    } else if (strcmp(cmd->cmd, "readF") == 0) {
+        cmd->cmd_id = READ_F;
+    } else if (strcmp(cmd->cmd, "writeT") == 0) {
+        cmd->cmd_id = WRITE_T;
+    } else if (strcmp(cmd->cmd, "upload") == 0) {
+        cmd->cmd_id = UPLOAD;
+    } else if (strcmp(cmd->cmd, "download") == 0) {
+        cmd->cmd_id = DOWNLOAD;
+    } else if (strcmp(cmd->cmd, "quit") == 0) {
+        cmd->cmd_id = QUIT;
+    } else if (strcmp(cmd->cmd, "killServer") == 0) {
+        cmd->cmd_id = KILL_SERVER;
+    } else {
+        cmd->cmd_id = -1;  // Invalid command
+    }
+
 }
 
 void handle_client_request(struct request* req,  int server_fifo_fd, DIR* dir) {
@@ -462,9 +542,10 @@ void handle_client_request(struct request* req,  int server_fifo_fd, DIR* dir) {
         close(client_fd);  // Close the FIFO
 
         // Check if client sent a "Quitting..." command
-        if (strcmp(resp.data, "Quitting...") == 0) {
+        if (resp.status == RESP_QUIT) {
             char message[BUF_SIZE];
-            snprintf(message, BUF_SIZE, "Child %d - Client%d disconnected", req->pid, shared_data->child_count);
+            snprintf(message, BUF_SIZE, "Child %d - client%d disconnected", req->pid, shared_data->child_count);
+            printf(">> %s\n", message);
             write_log(message);
             shared_data->child_count--;  // Decrement child count
             sem_post(&shared_data->sem);  // Release semaphore before exiting
