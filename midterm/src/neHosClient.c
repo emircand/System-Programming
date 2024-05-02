@@ -3,14 +3,13 @@
 
 void connect_to_server(int server_fd, bool wait);
 void interact_with_server(int server_fd, const char* client_fifo, enum req_type type);
-sem_t file_sem, sem;
+sem_t file_sem, sem, queue_sem;
 int shm_fd;
 SharedData* shared_data;
 
 int main(int argc, char *argv[]) {
     int client_fd, server_fd;
     bool try_again = false;
-    sem_init(&sem, 0, 1);
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <Connect/tryConnect> ServerPID\n", argv[0]);
         exit(EXIT_FAILURE);
@@ -20,25 +19,7 @@ int main(int argc, char *argv[]) {
     char client_fifo[256];
     char server_fifo[256];
 
-    // Open a shared memory object.
-    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
-    if (shm_fd == -1) {
-        perror("shm_open");
-        exit(EXIT_FAILURE);
-    }
-
-    // Set the size of the shared memory object.
-    if (ftruncate(shm_fd, sizeof(SharedData)) == -1) {
-        perror("ftruncate");
-        exit(EXIT_FAILURE);
-    }
-
-    shared_data = mmap(NULL, sizeof(SharedData), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (shared_data == MAP_FAILED) {
-        perror("mmap");
-        exit(EXIT_FAILURE);
-    }
-    sem_init(&shared_data->sem, 1, 1);
+    init_shared_data();
 
 
     req.pid = getpid();
@@ -85,6 +66,27 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+void init_shared_data() {
+    // Open the shared memory object
+    shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+
+    // Map the shared memory object
+    shared_data = mmap(NULL, sizeof(SharedData), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (shared_data == MAP_FAILED) {
+        perror("mmap");
+        exit(EXIT_FAILURE);
+    }
+
+    // Initialize the semaphores
+    sem_init(&shared_data->sem, 1, 1);
+    sem_init(&shared_data->file_sem, 1, 1);
+    sem_init(&shared_data->queue_sem, 1, 1);
+}
+
 void interact_with_server(int server_fd, const char* client_fifo, enum req_type type) {
     struct request req = { .pid = getpid(), .data = {0}, .type = type};
 
@@ -99,11 +101,13 @@ void interact_with_server(int server_fd, const char* client_fifo, enum req_type 
         // Remove the newline character
         req.data[strcspn(req.data, "\n")] = 0;
 
+        sem_wait(&shared_data->sem);
         // Write the request to the server FIFO
         if (write(server_fd, &req, sizeof(struct request)) != sizeof(struct request)) {
             perror("write");
             exit(EXIT_FAILURE);
         }
+        sem_post(&shared_data->sem);
         printf(">>Request sent to server\n");
 
         // Open the client FIFO for reading
@@ -152,7 +156,12 @@ void connect_to_server(int server_fd, bool wait) {
         req.type = TRY_CONNECT;
     }
 
-    write(server_fd, &req, sizeof(req));
+    sem_wait(&shared_data->sem);
+    if (write(server_fd, &req, sizeof(struct request)) != sizeof(struct request)) {
+        perror("write");
+        exit(EXIT_FAILURE);
+    }
+    sem_post(&shared_data->sem);
 
     // Open the client FIFO for reading
     char client_fifo[256];

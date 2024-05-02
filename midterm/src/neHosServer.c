@@ -38,18 +38,6 @@ int main(int argc, char* argv[]) {
     max_clients = atoi(argv[2]);
     child_pids = createQueue(max_clients);
 
-    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
-    if (shm_fd == -1) {
-        perror("shm_open");
-        exit(EXIT_FAILURE);
-    }
-
-    // Resize the shared memory object
-    if (ftruncate(shm_fd, sizeof(SharedData)) == -1) {
-        perror("ftruncate");
-        exit(EXIT_FAILURE);
-    }
-
     init_shared_data();
     
     /* Create the server folder if it doesn't exist */
@@ -167,6 +155,17 @@ int main(int argc, char* argv[]) {
 }
 
 void init_shared_data() {
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+
+    // Resize the shared memory object
+    if (ftruncate(shm_fd, sizeof(SharedData)) == -1) {
+        perror("ftruncate");
+        exit(EXIT_FAILURE);
+    }
     // Map the shared memory object
     shared_data = mmap(NULL, sizeof(SharedData), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     if (shared_data == MAP_FAILED) {
@@ -395,6 +394,150 @@ int writeT(const char *filename, int line_num, const char *str) {
     return 0;
 }
 
+void handle_upload(Command cmd, struct response* resp) {
+    if (cmd.arg_count != 1) {
+        strcpy(resp->data, "Invalid number of arguments");
+        resp->status = RESP_ERROR;
+        return;
+    }
+
+    printf(">> File upload request received\n");
+    printf(">> Uploading file: %s\n", cmd.args[0]);
+    ssize_t bytes_transferred = uploadFile(cmd.args[0]);
+    if (bytes_transferred == -1) {
+        strcpy(resp->data, "Error uploading file");
+        resp->status = RESP_ERROR;
+    } else {
+        char message[BUF_SIZE];
+        sprintf(message, "%zd bytes uploaded", bytes_transferred);
+        printf(">> %s\n", message);
+        strcpy(resp->data, message);
+    }
+}
+
+ssize_t uploadFile(const char *source_filename) {
+    char source_path[PATH_MAX];
+    char dest_path[PATH_MAX];
+    strcpy(source_path, source_filename);
+    sprintf(dest_path, "%s/%s", dir_path, source_filename);
+
+    sem_wait(&shared_data->file_sem); // Wait for the semaphore
+
+    // Check if the source file exists
+    if (access(source_path, F_OK) == -1) {
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;  // Return an error code if the source file does not exist
+    }
+
+    // Check if a file with the same name exists on the server's side
+    if (access(dest_path, F_OK) != -1) {
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;  // Return an error code if a file with the same name exists
+    }
+
+    int source_fd = open(source_path, O_RDONLY);
+    if (source_fd == -1) {
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;
+    }
+
+    int dest_fd = open(dest_path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+    if (dest_fd == -1) {
+        close(source_fd);
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;
+    }
+
+    char buffer[CHUNK_SIZE];
+    ssize_t n;
+    ssize_t total = 0;
+
+    while ((n = read(source_fd, buffer, CHUNK_SIZE)) > 0) {
+        if (write(dest_fd, buffer, n) != n) {
+            close(source_fd);
+            close(dest_fd);
+            sem_post(&shared_data->file_sem); // Release the semaphore
+            return -1;
+        }
+        total += n;
+    }
+
+    close(source_fd);
+    close(dest_fd);
+    sem_post(&shared_data->file_sem); // Release the semaphore
+
+    return total;
+}
+
+void handle_download(Command cmd, struct response* resp) {
+    if (cmd.arg_count != 1) {
+        strcpy(resp->data, "Invalid number of arguments");
+        resp->status = RESP_ERROR;
+        return;
+    }
+
+    if (downloadFile(cmd.args[0]) == -1) {
+        strcpy(resp->data, "Error downloading file");
+        resp->status = RESP_ERROR;
+    } else {
+        char message[BUF_SIZE];
+        sprintf(message, "Downloading the file with a name %s...", cmd.args[0]);
+        strcpy(resp->data, message);
+    }
+}
+
+int downloadFile(const char *source_filename) {
+    char source_path[PATH_MAX];
+    char dest_path[PATH_MAX];
+    sprintf(source_path, "%s/%s", dir_path, source_filename);
+    strcpy(dest_path, source_filename);
+
+    sem_wait(&shared_data->file_sem); // Wait for the semaphore
+
+    // Check if the source file exists
+    if (access(source_path, F_OK) == -1) {
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;  // Return an error code if the source file does not exist
+    }
+
+    // Check if a file with the same name exists on the client's side
+    if (access(dest_path, F_OK) != -1) {
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;  // Return an error code if a file with the same name exists
+    }
+
+    int source_fd = open(source_path, O_RDONLY);
+    if (source_fd == -1) {
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;
+    }
+
+    int dest_fd = open(dest_path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+    if (dest_fd == -1) {
+        close(source_fd);
+        sem_post(&shared_data->file_sem); // Release the semaphore
+        return -1;
+    }
+
+    char buffer[CHUNK_SIZE];
+    ssize_t n;
+
+    while ((n = read(source_fd, buffer, CHUNK_SIZE)) > 0) {
+        if (write(dest_fd, buffer, n) != n) {
+            close(source_fd);
+            close(dest_fd);
+            sem_post(&shared_data->file_sem); // Release the semaphore
+            return -1;
+        }
+    }
+
+    close(source_fd);
+    close(dest_fd);
+    sem_post(&shared_data->file_sem); // Release the semaphore
+
+    return 0;
+}
+
 struct response handle_command(const char* command, DIR* dir) {
     struct response resp = {RESP_OK, ""};
 
@@ -417,9 +560,9 @@ struct response handle_command(const char* command, DIR* dir) {
     } else if (strncmp(command, "writeT", 6) == 0) {
         handle_writeT(parsed_cmd, &resp);
     } else if (strncmp(command, "upload", 6) == 0) {
-        strcpy(resp.data, "Uploading the file...");
+        handle_upload(parsed_cmd, &resp);
     } else if (strncmp(command, "download", 8) == 0) {
-        strcpy(resp.data, "Downloading the file...");
+        handle_download(parsed_cmd, &resp);
     } else if (strncmp(command, "archServer", 10) == 0) {
         strcpy(resp.data, "Archiving the server files...");
     } else if (strcmp(command, "killServer") == 0) {
@@ -607,6 +750,7 @@ void cleanup() {
     close(shm_fd);
     shm_unlink(SHM_NAME);
 
+    destroyQueue(child_pids);
 
     printf("Cleanup complete, server shutting down.\n");
     exit(EXIT_SUCCESS);  // Ensure the process exits successfully

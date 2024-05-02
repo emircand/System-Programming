@@ -30,6 +30,7 @@
 #define SEM_NAME "/sem"
 #define SHM_SIZE 4096
 #define PATH_MAX 4096
+#define CHUNK_SIZE 1024
 
 enum req_cmd {HELP, LIST, READ_F, WRITE_T, UPLOAD, DOWNLOAD, QUIT, KILL_SERVER};
 
@@ -49,9 +50,6 @@ struct request {
     enum req_type type; // Request type
     int client_number; // Client index
 };
-
-
-
 
 struct response {
     int status;
@@ -77,6 +75,7 @@ struct response handle_command(const char* command, DIR* dir);
 void parse_command(char* request, Command* cmd);
 char* readF(const char *filename, int *line_num);
 void handle_readF(Command cmd, struct response* resp);
+ssize_t uploadFile(const char *source_filename); 
 
 //Client functions
 void send_connect_response(pid_t client_pid, bool wait); 

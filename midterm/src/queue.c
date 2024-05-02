@@ -37,3 +37,9 @@ struct request* dequeue(struct Queue* queue) {
     queue->size--;
     return item;
 }
+
+void destroyQueue(struct Queue* queue) {
+    // Free memory allocated for the queue
+    free(queue->array);
+    free(queue);
+}
