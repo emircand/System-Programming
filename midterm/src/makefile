@@ -1,5 +1,4 @@
 CC = gcc
-CFLAGS = -Wall
 TARGET_SERVER = neHosServer
 TARGET_CLIENT = neHosClient
 SRC_SERVER = neHosServer.c
@@ -14,13 +13,13 @@ OBJ_QUEUE = $(SRC_QUEUE:.c=.o)
 all: $(TARGET_SERVER) $(TARGET_CLIENT)
 
 $(TARGET_SERVER): $(OBJ_SERVER) $(OBJ_QUEUE)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) -o $@ $^
 
 $(TARGET_CLIENT): $(OBJ_CLIENT) $(OBJ_QUEUE)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) -o $@ $^
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) -c -o $@ $<
 
 run: $(TARGET_SERVER) $(TARGET_CLIENT)
 	./$(TARGET_SERVER) &

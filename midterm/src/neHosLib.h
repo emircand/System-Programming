@@ -35,7 +35,7 @@
 
 enum req_cmd {HELP, LIST, READ_F, WRITE_T, UPLOAD, DOWNLOAD, QUIT, KILL_SERVER};
 
-enum resp_status {RESP_OK, RESP_ERROR, RESP_CONNECT, RESP_DISCONNECT, RESP_QUIT};
+enum resp_status {RESP_OK, RESP_ERROR, RESP_CONNECT, RESP_DISCONNECT, RESP_QUIT, RESP_KILL};
 
 enum req_type {CONNECT, COMMAND, TRY_CONNECT};
 
@@ -84,6 +84,7 @@ struct response handle_response(int client_fd);
 void interact_with_server(int server_fd, const char* client_fifo, enum req_type type);
 void clean_client();
 void connect_to_server(int server_fd, bool wait);
+void sigIntHandler(int sig);
 
 
 #endif

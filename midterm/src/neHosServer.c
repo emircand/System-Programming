@@ -1,29 +1,23 @@
 #include "neHosLib.h"
 #include "queue.h"
 
-
-#define BUF_SIZE 1024
-#define MAX_FILES 100
-#define SHM_NAME "/shm"
-#define SEM_NAME "/sem"
-#define SHM_SIZE 4096
 FILE* log_file = NULL;
 struct Queue* child_pids;
 
-int child_count = 0;
 int max_clients;
 int server_fifo_fd, client_fifo_fd, num_read, num_write;
 int server_fd, dummy_fd, client_fd, log_fd, dir_fd;
 DIR* dir;
-char dir_path[BUF_SIZE];
+char dir_path[BUF_SIZE], server_fifo[BUF_SIZE];
 
 sem_t file_sem, sem;
 int shm_fd;
 SharedData* shared_data;
+int cleanup_flag = 0;
+int client_number;
 
 
 int main(int argc, char* argv[]) {
-    pid_t last_pid;
     
     char buf[BUF_SIZE];
     
@@ -64,8 +58,6 @@ int main(int argc, char* argv[]) {
     printf(">> Server Started PID: %d\n", getpid());
     printf(">> Waiting for clients...\n");
 
-    char server_fifo[BUF_SIZE];
-
     sprintf(server_fifo, SERVER_FIFO_TEMP, getpid());
 
     // Create the server FIFO
@@ -87,20 +79,15 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    printf(">> Server FIFO opened\n");
-    last_pid = 0;
     // Initialize child_count
     shared_data->child_count = 0;
+    client_number = 0;
 
-    while (1) {
-        struct request* req = malloc(sizeof(struct request));
-        if (!req) {
-            perror("malloc");
-            continue;
-        }
+    while (!cleanup_flag) {
+        struct request req;
 
         // Read the request from the server FIFO
-        ssize_t numRead = read(server_fifo_fd, req, sizeof(struct request));
+        ssize_t numRead = read(server_fifo_fd, &req, sizeof(struct request));
         if (numRead <= 0) {
             if (numRead == 0) {
                 fprintf(stderr, "Unexpected EOF\n");
@@ -109,51 +96,49 @@ int main(int argc, char* argv[]) {
             } else {
                 perror("read");
             }
-            free(req);
             break;
         }
 
         // Enqueue the incoming request
-        enqueue(child_pids, req);
+        enqueue(child_pids, &req);
         
-        sem_wait(&shared_data->queue_sem);
         // Dequeue a request
-        req = dequeue(child_pids);
+        req = *dequeue(child_pids);
 
         // Handle connection request
-        if (req->type == CONNECT || req->type == TRY_CONNECT) {
+        if (req.type == CONNECT || req.type == TRY_CONNECT) {
             // Server side: Handling a connection request
             sem_wait(&shared_data->sem);
             if (shared_data->child_count < max_clients) {
-                req->client_number = ++(shared_data->child_count);
+                shared_data->child_count++;
+                req.client_number = ++client_number;
                 sem_post(&shared_data->sem);
-                printf(">> Child PID: %d connected as client%d\n", req->pid, req->client_number);
+                printf(">> Child PID: %d connected as client%d\n", req.pid, req.client_number);
                 char message[BUF_SIZE];
-                snprintf(message, BUF_SIZE, "Child %d - Client%d connected", req->pid, req->client_number);
+                snprintf(message, BUF_SIZE, "Child %d - Client%d connected", req.pid, req.client_number);
                 write_log(message);
-                send_connect_response(req->pid, false);  // Send success response
+                send_connect_response(req.pid, false);  // Send success response
             } else {
                 sem_post(&shared_data->sem);
-                printf(">> Connection request PID %d… Queue FULL \n", req->pid);
-                send_connect_response(req->pid, true);  // Send failure response
+                printf(">> Connection request PID %d… Queue FULL \n", req.pid);
+                send_connect_response(req.pid, true);  // Send failure response
             }
         }
 
         // Handle command request
-        if (req->type == COMMAND) {
-            handle_client_request(req, server_fifo_fd, dir);
-            last_pid = req->pid;  // Track the last PID for any necessary action
+        if (req.type == COMMAND) {
+            handle_client_request(&req, server_fifo_fd, dir);
         }
 
-        sem_post(&shared_data->queue_sem);
-    }
+        if(req.cmd == KILL_SERVER){
+            printf(">>Server killed\n");
+            break;
+        }
 
-    // Clean up
-    close(server_fifo_fd);
-    unlink(server_fifo);
-    fclose(log_file);
-    closedir(dir);
-    // Clean up resources
+        // sem_post(&shared_data->queue_sem);
+    }
+    printf(">> bye\n");
+    cleanup();
     return 0;
 }
 
@@ -244,10 +229,8 @@ void handle_help(const char* command, struct response* resp) {
 }
 
 void handle_readF(Command cmd, struct response* resp) {
-    printf("number of arguments: %d\n", cmd.arg_count);
     if (cmd.arg_count == 0) {
         strcpy(resp->data, "Invalid number of arguments");
-        printf("Invalid number of arguments\n");
         resp->status = RESP_ERROR;
         return;
     } else if (cmd.arg_count == 1) {
@@ -259,7 +242,7 @@ void handle_readF(Command cmd, struct response* resp) {
         char filename[MAX_FILES];
         strcpy(filename, cmd.args[0]);
         int line_num = atoi(cmd.args[1]);
-        strcpy(resp->data, readF(filename, line_num));
+        strcpy(resp->data, readF(filename, &line_num));
     }
 }
 
@@ -273,45 +256,47 @@ char* readF(const char *filename, int *line_num) {
         char* error_msg = strdup("Could not open file\n");
         return error_msg;
     }
-    char* line = malloc(MAX_LINE_LEN);  // Dynamically allocate memory
+
+    char* line = malloc(BUF_SIZE + 1);  // Allocate memory for one buffer
     if (line == NULL) {  // Check if malloc was successful
         close(fd);
         sem_post(&shared_data->file_sem); // Release the semaphore
         return NULL;
     }
+
     int current_line = 0;
-    char c;
     ssize_t n;
     int i = 0;
 
     if (line_num != NULL) {
-        while ((n = read(fd, &c, 1)) > 0) {
-            if (c == '\n') {
-                current_line++;
-                if (current_line == *line_num) {
-                    break;
+        char* line_start = line;
+        while ((n = read(fd, line_start, BUF_SIZE)) > 0) {
+            for (i = 0; i < n; i++) {
+                if (line_start[i] == '\n') {
+                    current_line++;
+                    if (current_line == *line_num) {
+                        line_start[i] = '\0';  // Null-terminate the line
+                        memmove(line, line_start, i+1);  // Move the line to the start of the buffer
+                        break;
+                    } else {
+                        line_start = &line_start[i+1];  // Move the start of the line to the next character
+                    }
                 }
-                i = 0;  // Reset the index for the new line
-            } else if (current_line == *line_num - 1) {
-                line[i] = c;
-                i++;
+            }
+            if (current_line == *line_num) {
+                break;
             }
         }
         if (current_line != *line_num) {
             free(line);
             line = NULL;
-        } else {
-            line[i] = '\0';  // Null-terminate the line
         }
     } else {
         // Read the whole file
-        char buffer[1024];
-        while ((n = read(fd, buffer, sizeof(buffer) - 1)) > 0) {
-            buffer[n] = '\0';
-            strcat(line, buffer);
+        while ((n = read(fd, line, BUF_SIZE)) > 0) {
+            line[n] = '\0';  // Null-terminate the buffer
         }
     }
-
     close(fd);
     sem_post(&shared_data->file_sem); // Release the semaphore
     return line;
@@ -499,24 +484,28 @@ int downloadFile(const char *source_filename) {
 
     // Check if the source file exists
     if (access(source_path, F_OK) == -1) {
+        printf(">> Error: Source file does not exist\n");
         sem_post(&shared_data->file_sem); // Release the semaphore
         return -1;  // Return an error code if the source file does not exist
     }
 
     // Check if a file with the same name exists on the client's side
     if (access(dest_path, F_OK) != -1) {
+        printf(">> Error: Destination file already exists\n");
         sem_post(&shared_data->file_sem); // Release the semaphore
         return -1;  // Return an error code if a file with the same name exists
     }
 
     int source_fd = open(source_path, O_RDONLY);
     if (source_fd == -1) {
+        printf(">>Error: Could not open source file\n");
         sem_post(&shared_data->file_sem); // Release the semaphore
         return -1;
     }
 
     int dest_fd = open(dest_path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
     if (dest_fd == -1) {
+        printf(">>Error: Could not open destination file\n");
         close(source_fd);
         sem_post(&shared_data->file_sem); // Release the semaphore
         return -1;
@@ -527,6 +516,7 @@ int downloadFile(const char *source_filename) {
 
     while ((n = read(source_fd, buffer, CHUNK_SIZE)) > 0) {
         if (write(dest_fd, buffer, n) != n) {
+            printf(">>Error: Could not write to destination file\n");
             close(source_fd);
             close(dest_fd);
             sem_post(&shared_data->file_sem); // Release the semaphore
@@ -570,7 +560,8 @@ struct response handle_command(const char* command, DIR* dir) {
         archiveServer(parsed_cmd.args[0]);
         strcpy(resp.data, "Archiving the server...");
     } else if (strcmp(command, "killServer") == 0) {
-        strcpy(resp.data, "Killing the server...");
+        strcpy(resp.data, "Kill");
+        resp.status = RESP_KILL;
     } else if (strcmp(command, "quit") == 0) {
         strcpy(resp.data, "Quitting...");
         resp.status = RESP_QUIT;
@@ -632,11 +623,6 @@ void parse_command(char* request, Command* cmd) {
 
     cmd->arg_count = arg_count;
 
-    printf("Command: %s\n", cmd->cmd);
-    for (int i = 0; i < arg_count; i++) {
-        printf("Arg %d: %s\n", i, cmd->args[i]);
-    }
-
     // Determine the command ID based on the command string
     if (strcmp(cmd->cmd, "help") == 0) {
         cmd->cmd_id = HELP;
@@ -674,7 +660,6 @@ void handle_client_request(struct request* req,  int server_fifo_fd, DIR* dir) {
         if (client_fd == -1) {
             perror("open");
             sem_post(&shared_data->sem);  // Release semaphore before exiting on failure
-            free(req); // Free the request memory
             exit(EXIT_FAILURE);
         }
 
@@ -689,27 +674,30 @@ void handle_client_request(struct request* req,  int server_fifo_fd, DIR* dir) {
         close(client_fd);  // Close the FIFO
 
         // Check if client sent a "Quitting..." command
-        if (resp.status == RESP_QUIT) {
+        if (resp.status == RESP_QUIT || resp.status == RESP_KILL) {
             char message[BUF_SIZE];
-            snprintf(message, BUF_SIZE, "Child %d - client%d disconnected", req->pid, shared_data->child_count);
+            snprintf(message, BUF_SIZE, "Child %d - client%d disconnected", req->pid, req->client_number);
             printf(">> %s\n", message);
             write_log(message);
             shared_data->child_count--;  // Decrement child count
-            sem_post(&shared_data->sem);  // Release semaphore before exiting
-            free(req); // Free the request memory
-            exit(EXIT_SUCCESS);
+        } if(resp.status == RESP_KILL){
+            killServer();
+        }else if (resp.status == RESP_ERROR) {
+            char message[BUF_SIZE];
+            snprintf(message, BUF_SIZE, "Child %d - client%d sent an invalid command", req->pid, req->client_number);
+            shared_data->child_count--;  // Decrement child count
+            write_log(message);
+        } else {
+            char message[BUF_SIZE];
+            snprintf(message, BUF_SIZE, "Child %d - client%d sent a valid command", req->pid, req->client_number);
+            write_log(message);
         }
-
-        sem_post(&shared_data->sem);  // Release semaphore if not exiting
-        free(req);  // Free the request memory on exit of command handling
-        exit(EXIT_SUCCESS);
+        sem_post(&shared_data->sem);  // Release semaphore
     } else if (pid > 0) {  // Parent process
         int status;
         waitpid(pid, &status, WNOHANG);  // Non-blocking wait
-        free(req);  // Free the request memory
     } else {
         perror("fork");
-        free(req); // Ensure the request is freed on fork failure
         exit(EXIT_FAILURE);
     }
 }
@@ -733,33 +721,27 @@ void archiveServer(char *fileName) {
 
 void setup_signals() {
     struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));  // Initialize the structure to zero
     sa.sa_handler = sig_handler; // Pointer to signal handler function
-    sigemptyset(&sa.sa_mask);    // Initialize the signal mask
-    sa.sa_flags = SA_RESTART;    // To handle interrupted system calls
+    sigfillset(&sa.sa_mask);    // Initialize the signal mask
 
     // Set up signal handlers for SIGINT, SIGTERM, SIGQUIT, and SIGCHLD:
     if (sigaction(SIGINT, &sa, NULL) == -1 ||
-        sigaction(SIGTERM, &sa, NULL) == -1 ||
-        sigaction(SIGQUIT, &sa, NULL) == -1 ||
-        sigaction(SIGCHLD, &sa, NULL) == -1) {
+        sigaction(SIGCHLD, &sa, NULL) == -1 ){
         perror("Failed to set signal handlers");
         exit(EXIT_FAILURE);
-    }
+        }
 }
 
 void cleanup() {
+    destroyQueue(child_pids);
     // Close and unlink server FIFO
     if (server_fifo_fd >= 0) close(server_fifo_fd);
     if (dummy_fd >= 0) close(dummy_fd);
 
-    char buf[BUF_SIZE];
-    sprintf(buf, SERVER_FIFO_TEMP, getpid());
-    unlink(buf);
+    closedir(dir);
 
     // Close log file
     close(log_fd);
-
 
     // Destroy semaphore
     sem_destroy(&shared_data->sem);
@@ -771,33 +753,38 @@ void cleanup() {
     close(shm_fd);
     shm_unlink(SHM_NAME);
 
-    destroyQueue(child_pids);
-
-    printf("Cleanup complete, server shutting down.\n");
-    exit(EXIT_SUCCESS);  // Ensure the process exits successfully
+    printf(">> Cleanup complete, server shutting down.\n");
+    exit(EXIT_SUCCESS);
 }
 
 void sig_handler(int signum) {
-    pid_t pid = getpid();
-    // Depending on the signal type, perform appropriate actions:
+    // Log the server shutdown
     write_log("Server Shutting Down");
+
+    // Depending on the signal type, perform appropriate actions:
     switch (signum) {
         case SIGINT:
-        case SIGTERM:
-        case SIGQUIT:
-            // Handle graceful shutdown:
+            printf(">> Handling sigint\n", signum);
             cleanup();
             break;
         case SIGCHLD:
             // Reap zombie processes and adjust child count:
-            while ((pid = waitpid(-1, NULL, WNOHANG) > 0)) {
-                // sem_wait(&shared_data->sem);
-                // shared_data->child_count--; // Safely decrement child count
-                // sem_post(&shared_data->sem);
+            while(isEmpty(child_pids) == 0){
+                struct request* req = dequeue(child_pids);
+                if(waitpid(req->pid, NULL, WNOHANG) > 0){
+                    char message[BUF_SIZE];
+                    snprintf(message, BUF_SIZE, "Child %d - client%d disconnected", req->pid, req->client_number);
+                    write_log(message);
+                    kill(req->pid, SIGKILL);
+                }
             }
+
             break;
+
         default:
+            // Log unhandled signals:
             fprintf(stderr, "Unhandled signal: %d\n", signum);
+            break;
     }
 }
 
@@ -807,4 +794,13 @@ void err_exit(const char *err)
     exit(EXIT_FAILURE);
 }
 
-
+void killServer() {
+    char message[BUF_SIZE];
+    sprintf(message, "Server KILL", getpid());
+    write_log(message);
+    printf(">> Server killed\n");
+    cleanup_flag = 1;
+    if(kill(getppid(), SIGINT) == -1){
+        perror("kill");
+    }
+}

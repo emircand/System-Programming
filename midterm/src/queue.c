@@ -20,7 +20,6 @@ int isEmpty(struct Queue* queue) {
 
 void enqueue(struct Queue* queue, struct request* item) {
     if (isFull(queue)) {
-        // Optionally handle the error or log it
         return;
     }
     queue->rear = (queue->rear + 1) % queue->capacity;
@@ -54,7 +53,18 @@ void resizeQueue(struct Queue* queue, unsigned newCapacity) {
 }
 
 void destroyQueue(struct Queue* queue) {
-    // Free memory allocated for the queue
+    if (queue == NULL) {
+        return;
+    }
+
+    // Free each request in the queue
+    for (int i = queue->front; i != queue->rear; i = (i + 1) % queue->capacity) {
+        free(queue->array[i]);
+    }
+
+    // Free the array of requests
     free(queue->array);
+
+    // Free the queue itself
     free(queue);
 }
