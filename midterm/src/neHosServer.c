@@ -115,7 +115,8 @@ int main(int argc, char* argv[]) {
 
         // Enqueue the incoming request
         enqueue(child_pids, req);
-
+        
+        sem_wait(&shared_data->queue_sem);
         // Dequeue a request
         req = dequeue(child_pids);
 
@@ -143,6 +144,8 @@ int main(int argc, char* argv[]) {
             handle_client_request(req, server_fifo_fd, dir);
             last_pid = req->pid;  // Track the last PID for any necessary action
         }
+
+        sem_post(&shared_data->queue_sem);
     }
 
     // Clean up
@@ -564,7 +567,8 @@ struct response handle_command(const char* command, DIR* dir) {
     } else if (strncmp(command, "download", 8) == 0) {
         handle_download(parsed_cmd, &resp);
     } else if (strncmp(command, "archServer", 10) == 0) {
-        strcpy(resp.data, "Archiving the server files...");
+        archiveServer(parsed_cmd.args[0]);
+        strcpy(resp.data, "Archiving the server...");
     } else if (strcmp(command, "killServer") == 0) {
         strcpy(resp.data, "Killing the server...");
     } else if (strcmp(command, "quit") == 0) {
@@ -710,6 +714,23 @@ void handle_client_request(struct request* req,  int server_fifo_fd, DIR* dir) {
     }
 }
 
+void archiveServer(char *fileName) {
+    pid_t pid = fork();
+    char archive_path[PATH_MAX];
+    sprintf(archive_path, "%s/%s", dir_path, fileName);
+
+    if (pid < 0) {
+        // Fork failed
+        exit(1);
+    } else if (pid == 0) {
+        // Child process
+        execlp("tar", "tar", "cf", archive_path, dir_path, NULL);
+    } else {
+        // Parent process
+        wait(NULL);
+    }
+}
+
 void setup_signals() {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));  // Initialize the structure to zero
@@ -757,6 +778,7 @@ void cleanup() {
 }
 
 void sig_handler(int signum) {
+    pid_t pid = getpid();
     // Depending on the signal type, perform appropriate actions:
     write_log("Server Shutting Down");
     switch (signum) {
@@ -768,7 +790,7 @@ void sig_handler(int signum) {
             break;
         case SIGCHLD:
             // Reap zombie processes and adjust child count:
-            while (waitpid(-1, NULL, WNOHANG) > 0) {
+            while ((pid = waitpid(-1, NULL, WNOHANG) > 0)) {
                 // sem_wait(&shared_data->sem);
                 // shared_data->child_count--; // Safely decrement child count
                 // sem_post(&shared_data->sem);

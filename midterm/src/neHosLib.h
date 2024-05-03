@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <sys/wait.h>
 
 #define SERVER_FIFO_TEMP "/tmp/server.%d.fifo"
 #define CLIENT_FIFO_TEMP "/tmp/client.%d.fifo"

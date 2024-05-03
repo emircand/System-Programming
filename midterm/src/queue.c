@@ -33,9 +33,24 @@ struct request* dequeue(struct Queue* queue) {
         return NULL;
     }
     struct request* item = queue->array[queue->front];
+    queue->array[queue->front] = NULL;
     queue->front = (queue->front + 1) % queue->capacity;
     queue->size--;
     return item;
+}
+
+void resizeQueue(struct Queue* queue, unsigned newCapacity) {
+    struct request** newArray = (struct request**) malloc(newCapacity * sizeof(struct request*));
+    unsigned i = 0;
+    while (!isEmpty(queue)) {
+        newArray[i++] = dequeue(queue);
+    }
+    free(queue->array);
+    queue->array = newArray;
+    queue->capacity = newCapacity;
+    queue->front = 0;
+    queue->rear = i - 1;
+    queue->size = i;
 }
 
 void destroyQueue(struct Queue* queue) {

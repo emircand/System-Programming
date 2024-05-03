@@ -68,9 +68,15 @@ int main(int argc, char *argv[]) {
 
 void init_shared_data() {
     // Open the shared memory object
-    shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
         perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+
+    // Resize the shared memory object
+    if (ftruncate(shm_fd, sizeof(SharedData)) == -1) {
+        perror("ftruncate");
         exit(EXIT_FAILURE);
     }
 
@@ -101,13 +107,11 @@ void interact_with_server(int server_fd, const char* client_fifo, enum req_type 
         // Remove the newline character
         req.data[strcspn(req.data, "\n")] = 0;
 
-        sem_wait(&shared_data->sem);
         // Write the request to the server FIFO
         if (write(server_fd, &req, sizeof(struct request)) != sizeof(struct request)) {
             perror("write");
             exit(EXIT_FAILURE);
         }
-        sem_post(&shared_data->sem);
         printf(">>Request sent to server\n");
 
         // Open the client FIFO for reading
@@ -156,12 +160,10 @@ void connect_to_server(int server_fd, bool wait) {
         req.type = TRY_CONNECT;
     }
 
-    sem_wait(&shared_data->sem);
     if (write(server_fd, &req, sizeof(struct request)) != sizeof(struct request)) {
         perror("write");
         exit(EXIT_FAILURE);
     }
-    sem_post(&shared_data->sem);
 
     // Open the client FIFO for reading
     char client_fifo[256];
@@ -182,7 +184,9 @@ void connect_to_server(int server_fd, bool wait) {
             case RESP_CONNECT:
                 printf("Connected to the server.\n");
                 close(client_fd);
+                // sem_wait(&shared_data->queue_sem);
                 interact_with_server(server_fd, client_fifo, COMMAND);
+                // sem_post(&shared_data->queue_sem);
                 return;
             case RESP_ERROR:
                 if (strcmp(resp.data, "Server full") == 0) {
