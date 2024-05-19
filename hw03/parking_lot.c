@@ -7,6 +7,8 @@
 
 #define TOTAL_AUTOMOBILE_SPACES 8
 #define TOTAL_PICKUP_SPACES 4
+#define TOTAL_THREADS 100
+pthread_t threads[TOTAL_THREADS];
 
 // Semaphores for synchronization
 sem_t newPickup, inChargeforPickup;
@@ -16,6 +18,7 @@ sem_t newAutomobile, inChargeforAutomobile;
 int mFree_automobile = TOTAL_AUTOMOBILE_SPACES;
 int mFree_pickup = TOTAL_PICKUP_SPACES;
 int running = 1;
+int active_threads = 0;
 
 enum VehicleType {
     CAR = 1,
@@ -83,16 +86,23 @@ void* carAttendant(void* arg) {
 }
 
 void my_cleaner() {
-    sem_destroy(&newPickup);
-    sem_destroy(&inChargeforPickup);
-    sem_destroy(&newAutomobile);
-    sem_destroy(&inChargeforAutomobile);
+    // Thread cleanup
+    for (int i = 0; i < active_threads; i++) {
+        pthread_cancel(threads[i]);  // Send cancellation request to the thread
+        pthread_join(threads[i], NULL);  // Wait for the thread to terminate
+    }
+
+    // Semaphore destruction
+    sem_destroy(&newPickup);  // Destroy semaphore for new pickup signal
+    sem_destroy(&inChargeforPickup);  // Destroy semaphore for pickup in charge signal
+    sem_destroy(&newAutomobile);  // Destroy semaphore for new automobile signal
+    sem_destroy(&inChargeforAutomobile);  // Destroy semaphore for automobile in charge signal
 }
 
 void handle_sigint(int sig) {
     printf("Handling SIGINT.. Exiting..\n");
 
-    // Destroy semaphores and mutexes
+    // Destroy semaphores and cancel threads
     my_cleaner();
     
     exit(0);
@@ -109,7 +119,6 @@ int main() {
     }
     
     srand(time(NULL));
-    pthread_t threads[10];
     int attendantAuto = 1, attendantPickup = 2;
 
     // Initialize semaphores
@@ -121,20 +130,23 @@ int main() {
     // Create threads for 2 valets
     pthread_create(&threads[0], NULL, carAttendant, &attendantAuto);
     pthread_create(&threads[1], NULL, carAttendant, &attendantPickup);
+    active_threads += 2;
 
     // Create threads for 8 car owners
-    for (int i = 2; i < 100; i++) {
+    for (int i = 2; i < TOTAL_THREADS; i++) {
         pthread_create(&threads[i], NULL, carOwner, NULL);
+        active_threads++;
         sleep(1);
-        if(i == 99) {
+        if(i == TOTAL_THREADS - 1) {
             running = 0;
             my_cleaner();
             exit(EXIT_SUCCESS);
         }
     }
 
+    /* Possibly not needed */
     // Wait for all threads to complete
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < TOTAL_THREADS; i++) {
         pthread_join(threads[i], NULL);
     }
 
