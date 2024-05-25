@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "stat.h": "c",
+        "errno.h": "c",
+        "pthread.h": "c"
+    }
+}

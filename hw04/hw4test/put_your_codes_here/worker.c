@@ -1,13 +1,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include "utils.h"
 
+int total_files_copied = 0;
+int total_dirs_copied = 0;
+int total_fifo_files_copied = 0;
+ssize_t total_bytes_copied = 0;
+
+extern buffer_t buffer;
 
 void *worker(void *arg) {
-    char *dst_dir = (char *)arg;
-    (void)dst_dir;
-
     while (1) {
         pthread_mutex_lock(&buffer.mutex);
 
@@ -21,18 +27,34 @@ void *worker(void *arg) {
         }
 
         file_task_t task = get_task(&buffer);
-
         pthread_cond_signal(&buffer.not_full);
         pthread_mutex_unlock(&buffer.mutex);
 
         // Copy file content
-        char buf[1024];
+        char buf[4096];
         ssize_t bytes;
         while ((bytes = read(task.src_fd, buf, sizeof(buf))) > 0) {
             if (write(task.dst_fd, buf, bytes) != bytes) {
                 perror("write");
                 break;
             }
+            pthread_mutex_lock(&counter_mutex);
+            total_bytes_copied += bytes;
+            pthread_mutex_unlock(&counter_mutex);
+        }
+
+        // Update statistics
+        struct stat statbuf;
+        if (stat(task.src_filename, &statbuf) == 0) {
+            pthread_mutex_lock(&counter_mutex);
+            if (S_ISREG(statbuf.st_mode)) {
+                total_files_copied++;
+            } if (S_ISDIR(statbuf.st_mode)) {
+                total_dirs_copied++;
+            } if (S_ISFIFO(statbuf.st_mode)) {
+                total_fifo_files_copied++;
+            }
+            pthread_mutex_unlock(&counter_mutex);
         }
 
         close(task.src_fd);

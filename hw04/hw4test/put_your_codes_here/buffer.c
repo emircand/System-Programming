@@ -19,6 +19,7 @@ void destroy_buffer(buffer_t *buffer) {
     pthread_mutex_destroy(&buffer->mutex);
     pthread_cond_destroy(&buffer->not_empty);
     pthread_cond_destroy(&buffer->not_full);
+    pthread_mutex_destroy(&counter_mutex);
 }
 
 void add_task(buffer_t *buffer, file_task_t task) {
