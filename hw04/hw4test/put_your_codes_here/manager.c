@@ -61,13 +61,14 @@ void add_directory_tasks(const char *src_dir, const char *dst_dir) {
             }
 
             // Recursively add directory tasks
+            total_dirs_copied++;
             add_directory_tasks(task.src_filename, task.dst_filename);
         } else if (S_ISFIFO(statbuf.st_mode)) {
             if (mkfifo(task.dst_filename, statbuf.st_mode) == -1 && errno != EEXIST) {
                 perror("mkfifo");
                 continue;
             }
-
+            total_fifo_files_copied++;
             printf("Copied FIFO %s to %s\n", task.src_filename, task.dst_filename);
         } else {
             printf("Unsupported file type for %s\n", task.src_filename);
@@ -91,5 +92,6 @@ void *manager(void *arg) {
     pthread_cond_broadcast(&buffer.not_empty);
     pthread_mutex_unlock(&buffer.mutex);
 
+    // pthread_barrier_wait(&barrier);
     pthread_exit(NULL);
 }

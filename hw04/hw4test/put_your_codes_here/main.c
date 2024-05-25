@@ -14,6 +14,7 @@
 buffer_t buffer;
 
 pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
+// pthread_barrier_t barrier;
 
 // Function prototypes
 void usage(const char *prog_name);
@@ -64,6 +65,8 @@ int main(int argc, char *argv[]) {
     // Measure execution time
     clock_t start_time = clock();
 
+    
+
     // Create manager thread
     manager_args_t args = {src_dir, dst_dir};
     pthread_t manager_thread;
@@ -71,6 +74,11 @@ int main(int argc, char *argv[]) {
         perror("Failed to create manager thread");
         exit(EXIT_FAILURE);
     }
+
+    // if (pthread_barrier_init(&barrier, NULL, num_workers + 1) != 0) {
+    //     perror("Failed to initialize barrier");
+    //     exit(EXIT_FAILURE);
+    // }
 
     // Create worker threads
     pthread_t worker_threads[num_workers];
@@ -80,6 +88,7 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     }
+    // pthread_barrier_wait(&barrier); // all threads are ready
 
     // Wait for manager to finish
     pthread_join(manager_thread, NULL);
@@ -88,6 +97,8 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < num_workers; i++) {
         pthread_join(worker_threads[i], NULL);
     }
+
+    // pthread_barrier_wait(&barrier); // all threads are done
 
     // Measure end time
     clock_t end_time = clock();
@@ -99,6 +110,8 @@ int main(int argc, char *argv[]) {
 
     // Clean up buffer
     destroy_buffer(&buffer);
+
+    // pthread_barrier_destroy(&barrier);
 
     return 0;
 }

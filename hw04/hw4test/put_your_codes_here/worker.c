@@ -11,8 +11,6 @@ int total_dirs_copied = 0;
 int total_fifo_files_copied = 0;
 ssize_t total_bytes_copied = 0;
 
-extern buffer_t buffer;
-
 void *worker(void *arg) {
     while (1) {
         pthread_mutex_lock(&buffer.mutex);
@@ -43,25 +41,13 @@ void *worker(void *arg) {
             pthread_mutex_unlock(&counter_mutex);
         }
 
-        // Update statistics
-        struct stat statbuf;
-        if (stat(task.src_filename, &statbuf) == 0) {
-            pthread_mutex_lock(&counter_mutex);
-            if (S_ISREG(statbuf.st_mode)) {
-                total_files_copied++;
-            } if (S_ISDIR(statbuf.st_mode)) {
-                total_dirs_copied++;
-            } if (S_ISFIFO(statbuf.st_mode)) {
-                total_fifo_files_copied++;
-            }
-            pthread_mutex_unlock(&counter_mutex);
-        }
-
         close(task.src_fd);
         close(task.dst_fd);
 
         fprintf(stdout, "Copied %s to %s\n", task.src_filename, task.dst_filename);
     }
+
+    // pthread_barrier_wait(&barrier);
 
     pthread_exit(NULL);
 }

@@ -32,6 +32,7 @@ void add_task(buffer_t *buffer, file_task_t task) {
     buffer->tasks[buffer->in] = task;
     buffer->in = (buffer->in + 1) % buffer->capacity;
     buffer->count++;
+    total_files_copied++;
 
     pthread_cond_signal(&buffer->not_empty);
     pthread_mutex_unlock(&buffer->mutex);
