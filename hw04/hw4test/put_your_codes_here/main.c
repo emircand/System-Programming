@@ -14,7 +14,10 @@
 buffer_t buffer;
 
 pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
-// pthread_barrier_t barrier;
+pthread_barrier_t barrier;
+
+int buffer_size;
+int num_workers;
 
 // Function prototypes
 void usage(const char *prog_name);
@@ -50,8 +53,8 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
     }
 
-    int buffer_size = atoi(argv[1]);
-    int num_workers = atoi(argv[2]);
+    buffer_size = atoi(argv[1]);
+    num_workers = atoi(argv[2]);
     const char *src_dir = argv[3];
     const char *dst_dir = argv[4];
 
@@ -65,20 +68,19 @@ int main(int argc, char *argv[]) {
     // Measure execution time
     clock_t start_time = clock();
 
-    
-
     // Create manager thread
     manager_args_t args = {src_dir, dst_dir};
+
+    if (pthread_barrier_init(&barrier, NULL, num_workers+1) != 0) {
+        perror("Failed to initialize barrier");
+        exit(EXIT_FAILURE);
+    }
+
     pthread_t manager_thread;
     if (pthread_create(&manager_thread, NULL, manager, (void *)&args) != 0) {
         perror("Failed to create manager thread");
         exit(EXIT_FAILURE);
     }
-
-    // if (pthread_barrier_init(&barrier, NULL, num_workers + 1) != 0) {
-    //     perror("Failed to initialize barrier");
-    //     exit(EXIT_FAILURE);
-    // }
 
     // Create worker threads
     pthread_t worker_threads[num_workers];
@@ -88,7 +90,6 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     }
-    // pthread_barrier_wait(&barrier); // all threads are ready
 
     // Wait for manager to finish
     pthread_join(manager_thread, NULL);
@@ -98,8 +99,6 @@ int main(int argc, char *argv[]) {
         pthread_join(worker_threads[i], NULL);
     }
 
-    // pthread_barrier_wait(&barrier); // all threads are done
-
     // Measure end time
     clock_t end_time = clock();
     double execution_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -108,10 +107,10 @@ int main(int argc, char *argv[]) {
     // Collect and print statistics
     collect_statistics();
 
+    pthread_barrier_destroy(&barrier);
+
     // Clean up buffer
     destroy_buffer(&buffer);
-
-    // pthread_barrier_destroy(&barrier);
 
     return 0;
 }
@@ -122,6 +121,8 @@ void collect_statistics() {
     extern int total_fifo_files_copied;
     extern ssize_t total_bytes_copied;
 
+    printf("\n---------------STATISTICS--------------------\n");
+    printf("Consumers: %d - Buffer Size: %d\n", num_workers, buffer_size);
     printf("Total files copied: %d\n", total_files_copied);
     printf("Total directories copied: %d\n", total_dirs_copied);
     printf("Total FIFOs copied: %d\n", total_fifo_files_copied);

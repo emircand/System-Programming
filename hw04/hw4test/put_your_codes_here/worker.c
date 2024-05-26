@@ -12,6 +12,8 @@ int total_fifo_files_copied = 0;
 ssize_t total_bytes_copied = 0;
 
 void *worker(void *arg) {
+    pthread_barrier_wait(&barrier);
+
     while (1) {
         pthread_mutex_lock(&buffer.mutex);
 
@@ -43,11 +45,9 @@ void *worker(void *arg) {
 
         close(task.src_fd);
         close(task.dst_fd);
-
-        fprintf(stdout, "Copied %s to %s\n", task.src_filename, task.dst_filename);
     }
 
-    // pthread_barrier_wait(&barrier);
+    pthread_barrier_wait(&barrier);
 
     pthread_exit(NULL);
 }

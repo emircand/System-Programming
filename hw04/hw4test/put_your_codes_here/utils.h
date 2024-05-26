@@ -31,7 +31,7 @@ extern int total_dirs_copied;
 extern int total_fifo_files_copied;
 extern ssize_t total_bytes_copied;
 
-// extern pthread_barrier_t barrier;
+extern pthread_barrier_t barrier;
 extern pthread_mutex_t counter_mutex;
 
 void init_buffer(buffer_t *buffer, int capacity);
