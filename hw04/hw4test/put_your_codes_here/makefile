@@ -3,11 +3,11 @@ CFLAGS = -Wall -pthread -std=gnu99
 
 all: MWCp
 
-MWCp: main.o manager.o worker.o buffer.o
-	$(CC) $(CFLAGS) -o MWCp main.o manager.o worker.o buffer.o
+MWCp: 1901042674_main.o manager.o worker.o buffer.o
+	$(CC) $(CFLAGS) -o MWCp 1901042674_main.o manager.o worker.o buffer.o
 
-main.o: main.c utils.h
-	$(CC) $(CFLAGS) -c main.c
+1901042674_main.o: 1901042674_main.c utils.h
+	$(CC) $(CFLAGS) -c 1901042674_main.c
 
 manager.o: manager.c utils.h
 	$(CC) $(CFLAGS) -c manager.c

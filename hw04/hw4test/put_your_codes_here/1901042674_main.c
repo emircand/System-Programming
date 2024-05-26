@@ -1,14 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <pthread.h>
-#include <unistd.h>
-#include <string.h>
-#include <dirent.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <time.h>
 #include "utils.h"
-#include <signal.h>
 
 // Global variables
 buffer_t buffer;
@@ -17,7 +7,10 @@ pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_barrier_t barrier;
 
 int buffer_size;
-int num_workers;
+int num_workers, active_workers = 0;
+
+pthread_t manager_thread = NULL;
+pthread_t *worker_threads = NULL;
 
 // Function prototypes
 void usage(const char *prog_name);
@@ -31,7 +24,7 @@ typedef struct {
 } manager_args_t;
 
 void sigint_handler(int signo) {
-    destroy_buffer(&buffer);
+    cleanup();
     printf("Handling SIGINT... Exiting... \n");
     exit(EXIT_SUCCESS);
 }
@@ -83,12 +76,18 @@ int main(int argc, char *argv[]) {
     }
 
     // Create worker threads
-    pthread_t worker_threads[num_workers];
+    worker_threads = malloc(num_workers * sizeof(pthread_t));
+    if (worker_threads == NULL) {
+        perror("Failed to allocate memory for worker threads");
+        exit(EXIT_FAILURE);
+    }
+
     for (int i = 0; i < num_workers; i++) {
         if (pthread_create(&worker_threads[i], NULL, worker, NULL) != 0) {
             perror("Failed to create worker thread");
             exit(EXIT_FAILURE);
         }
+        active_workers++;
     }
 
     // Wait for manager to finish
@@ -99,6 +98,8 @@ int main(int argc, char *argv[]) {
         pthread_join(worker_threads[i], NULL);
     }
 
+    cleanup();
+
     // Measure end time
     clock_t end_time = clock();
     double execution_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -107,13 +108,26 @@ int main(int argc, char *argv[]) {
     // Collect and print statistics
     collect_statistics();
 
-    pthread_barrier_destroy(&barrier);
-
-    // Clean up buffer
-    destroy_buffer(&buffer);
 
     return 0;
 }
+
+void cleanup() {
+    if (buffer.done != 1) {
+        if (worker_threads != NULL) {
+            for (int i = 0; i < active_workers; i++) {
+                pthread_cancel(worker_threads[i]);
+            }
+        }
+
+        pthread_cancel(manager_thread);
+    }
+    free(worker_threads);
+    
+    pthread_barrier_destroy(&barrier);
+    destroy_buffer(&buffer);
+}
+
 
 void collect_statistics() {
     extern int total_files_copied;

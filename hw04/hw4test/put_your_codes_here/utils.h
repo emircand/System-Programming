@@ -3,6 +3,16 @@
 
 #include <pthread.h>
 #include <sys/types.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <signal.h>
+#include <time.h>
+#include <errno.h>
 
 #define PATH_MAX 4096
 
@@ -40,5 +50,6 @@ void add_task(buffer_t *buffer, file_task_t task);
 file_task_t get_task(buffer_t *buffer);
 void *manager(void *arg);
 void *worker(void *arg);
+void cleanup();
 
 #endif // UTILS_H

@@ -1,5 +1,3 @@
-#include <stdlib.h>
-#include <pthread.h>
 #include "utils.h"
 
 void init_buffer(buffer_t *buffer, int capacity) {
