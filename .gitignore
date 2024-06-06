@@ -20,6 +20,8 @@
 *.docx
 *.pdf
 *.txt
+*.odt
+*.7z
 
 
 # Ignore compiled libraries and dependencies
@@ -31,5 +33,5 @@ vendor/
 build/
 bin/
 hw03/Emircan_Demirel_1901042674.zip
-hw04/hw4test/testdir
-hw04/hw4test/tocopy
+hw04/hw4test
+hw05/hw5test
