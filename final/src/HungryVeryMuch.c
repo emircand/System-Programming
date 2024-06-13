@@ -6,6 +6,14 @@
 #include <signal.h>
 #include <pthread.h>
 
+typedef struct {
+    int client_id;
+    int location_x;
+    int location_y;
+    int town_size_x;
+    int town_size_y;
+} OrderDetails;
+
 pthread_mutex_t delivery_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t delivery_cond = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t order_send_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -23,7 +31,7 @@ void *wait_for_delivery(void *sock_ptr) {
 
     while ((bytes_read = read(sock, buffer, sizeof(buffer) - 1)) > 0) {
         buffer[bytes_read] = '\0';
-        if (strcmp(buffer, "All orders delivered") == 0) {
+        if (strcmp(buffer, "All orders served. Closing connection.") == 0) {
             pthread_mutex_lock(&delivery_mutex);
             all_orders_delivered = 1;
             pthread_cond_signal(&delivery_cond);
@@ -74,21 +82,22 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    for (int i = 0; i < number_of_clients; i++) {
-        int location_x = rand() % town_size_x;
-        int location_y = rand() % town_size_y;
-        char order[256];
-        sprintf(order, "Order from client %d at location (%d, %d)\n", i, location_x, location_y);
-        sleep(1);
-        printf("> %s\n", order);
-        pthread_mutex_lock(&order_send_mutex);
-        send(sock, order, strlen(order), 0);
-        pthread_mutex_unlock(&order_send_mutex);
-    }
-
     pthread_t delivery_thread;
     pthread_create(&delivery_thread, NULL, wait_for_delivery, &sock);
     pthread_detach(delivery_thread);
+
+    for (int i = 0; i < number_of_clients; i++) {
+        OrderDetails order;
+        order.client_id = i;
+        order.location_x = rand() % town_size_x;
+        order.location_y = rand() % town_size_y;
+        order.town_size_x = town_size_x;
+        order.town_size_y = town_size_y;
+        printf("> Order from client %d at location (%d, %d) with town size (%d, %d)\n", order.client_id, order.location_x, order.location_y, order.town_size_x, order.town_size_y);
+
+        send(sock, &order, sizeof(OrderDetails), 0);
+        sleep(0.3);  // Add delay to simulate real-world time gaps between orders
+    }
 
     pthread_mutex_lock(&delivery_mutex);
     while (!all_orders_delivered) {
