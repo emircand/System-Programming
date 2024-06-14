@@ -16,7 +16,7 @@ typedef struct {
     int is_terminated;
     pid_t pid;
 } OrderDetails;
-
+pthread_t delivery_thread;
 pthread_mutex_t delivery_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t delivery_cond = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t order_send_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -38,6 +38,8 @@ void handle_sigint(int sig) {
     pthread_cond_signal(&delivery_cond);
     pthread_mutex_unlock(&order_send_mutex);
 
+    pthread_join(delivery_thread, NULL); // Wait for the delivery thread to finish
+    close(sock); // Close the socket
     exit(0);
 }
 
@@ -57,7 +59,7 @@ void *wait_for_delivery(void *sock_ptr) {
         }
     }
 
-    close(sock);
+    close(sock); // Close the socket
     return NULL;
 }
 
@@ -92,17 +94,18 @@ int main(int argc, char *argv[]) {
 
     if (inet_pton(AF_INET, ip, &serv_addr.sin_addr) <= 0) {
         printf("\nInvalid address/ Address not supported \n");
+        close(sock); // Close the socket before exiting
         exit(1);
     }
 
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         printf("\nConnection Failed \n");
+        close(sock); // Close the socket before exiting
         exit(1);
     }
 
-    pthread_t delivery_thread;
+    
     pthread_create(&delivery_thread, NULL, wait_for_delivery, &sock);
-    pthread_detach(delivery_thread);
 
     printf("> PID: %d\n", getpid());
     printf("> Sending %d orders to %s:%d\n", number_of_clients, ip, port);
@@ -126,6 +129,9 @@ int main(int argc, char *argv[]) {
     pthread_mutex_unlock(&delivery_mutex);
 
     printf("> All customers served\n> log file written ..\n");
+
+    pthread_join(delivery_thread, NULL); // Wait for the delivery thread to finish
+    close(sock); // Ensure the socket is closed
 
     return 0;
 }

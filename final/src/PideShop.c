@@ -77,10 +77,21 @@ Cook *cooks; // Global pointer to store the array of cooks
 int cook_thread_pool_size;
 int delivery_thread_pool_size;
 
+pthread_t *cook_threads;
+pthread_t *delivery_threads;
+pthread_t client_thread;
+
+int cook_thread_active = 0;
+int delivery_thread_active = 0;
+
 // Global variables
 int total_orders_received = 0;
 int total_orders_cooked = 0;
 int total_orders_delivered = 0;
+
+int terminate = 0;
+int server_fd = -1;
+int client_pid = -1;
 
 void print_order_statistics() {
     printf("Total orders received: %d\n", total_orders_received);
@@ -113,12 +124,66 @@ void handle_sigint(int sig) {
     printf(".. Upps quiting.. writing log file..\n");
     print_order_statistics();
 
+    // Send SIGINT signal to the client
+    if (client_pid > 0) {
+        kill(client_pid, SIGINT);
+    }
+
     // Wake up all threads to ensure they can check the termination signal
     pthread_mutex_lock(&shutdown_mutex);
     pthread_cond_broadcast(&shutdown_cond);
     pthread_mutex_unlock(&shutdown_mutex);
 
     server_running = 0;
+
+    // Wait for all threads to finish
+    for (int i = 0; i < cook_thread_active; i++) {
+        if (cook_threads[i] != NULL) {
+            pthread_join(cook_threads[i], NULL);
+        }
+    }
+
+    free(cook_threads); // Free the allocated memory for cook threads
+
+    for (int i = 0; i < delivery_thread_active; i++) {
+        if (delivery_threads[i] != NULL) {
+            pthread_join(delivery_threads[i], NULL);
+        }
+    }
+
+    free(delivery_threads); // Free the allocated memory for delivery threads
+
+    pthread_join(client_thread, NULL); // Wait for the client thread to finish
+
+    // Close the server file descriptor
+    if (server_fd >= 0) {
+        close(server_fd);
+    }
+
+    // Free the allocated memory
+    if (deliveries_per_person != NULL) {
+        free(deliveries_per_person);
+        deliveries_per_person = NULL; // Nullify the pointer after freeing
+    }
+    if (cooks != NULL) {
+        free(cooks); // Free the allocated memory for cooks
+        cooks = NULL; // Nullify the pointer after freeing
+    }
+
+    // Clean the cook queue
+    while (cook_queue_head != NULL) {
+        Order *temp = cook_queue_head;
+        cook_queue_head = cook_queue_head->next;
+        free(temp);
+    }
+
+    // Clean the delivery queue
+    while (delivery_queue_head != NULL) {
+        Order *temp = delivery_queue_head;
+        delivery_queue_head = delivery_queue_head->next;
+        free(temp);
+    }
+
     exit(0);
 }
 
@@ -309,8 +374,8 @@ void *client_handler(void *arg) {
         if (order_details.is_terminated == 1) {
             // Log the termination request and close the connection
             log_activity("Received TERMINATE message from client", -1);
-            server_running = 0;
             printf("> Order Cancelled by client @%d\n", order_details.pid);
+            server_running = 0;
             close(client_data->client_fd);
             free(client_data);
             return NULL;
@@ -333,6 +398,7 @@ void *client_handler(void *arg) {
         new_order->delivered = 0;
         new_order->next = NULL;
         new_order->pid = order_details.pid;
+        client_pid = order_details.pid;
 
         pthread_mutex_lock(&cook_queue_mutex);
         enqueue_order(&cook_queue_head, &cook_queue_tail, new_order);
@@ -391,6 +457,23 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    cook_threads = malloc(cook_thread_pool_size * sizeof(pthread_t));
+    if (cook_threads == NULL) {
+        fprintf(stderr, "Failed to allocate memory for cook_threads\n");
+        free(cooks);
+        free(deliveries_per_person);
+        exit(1);
+    }
+
+    delivery_threads = malloc(delivery_thread_pool_size * sizeof(pthread_t));
+    if (delivery_threads == NULL) {
+        fprintf(stderr, "Failed to allocate memory for delivery_threads\n");
+        free(cooks);
+        free(deliveries_per_person);
+        free(cook_threads);
+        exit(1);
+    }
+
     signal(SIGINT, handle_sigint);
     signal(SIGQUIT, handle_sigint);
 
@@ -398,7 +481,7 @@ int main(int argc, char *argv[]) {
     sem_init(&oven_apparatus_sem, 0, OVEN_APPARATUS);
     sem_init(&oven_opening_sem, 0, OVEN_OPENINGS);
 
-    int server_fd, new_socket;
+    int new_socket;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     int opt = 1;
@@ -411,6 +494,7 @@ int main(int argc, char *argv[]) {
     // Set the SO_REUSEADDR socket option
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
         perror("setsockopt failed");
+        close(server_fd);
         exit(EXIT_FAILURE);
     }
 
@@ -434,23 +518,21 @@ int main(int argc, char *argv[]) {
     printf("> PideShop active waiting for connection ...\n");
 
     log_activity("PideShop server started.", -1);
-
-    pthread_t cook_threads[cook_thread_pool_size];
-    pthread_t delivery_threads[delivery_thread_pool_size];
-    int delivery_ids[delivery_thread_pool_size];
-
     for (int i = 0; i < cook_thread_pool_size; i++) {
         cooks[i].id = i;
         cooks[i].orders_prepared = 0;
         pthread_create(&cook_threads[i], NULL, cook_thread, &cooks[i]);
+        cook_thread_active++;
     }
 
+    int delivery_ids[delivery_thread_pool_size];
     for (int i = 0; i < delivery_thread_pool_size; i++) {
         delivery_ids[i] = i;
         pthread_create(&delivery_threads[i], NULL, delivery_thread, &delivery_ids[i]);
+        delivery_thread_active++;
     }
 
-    while (server_running) {
+    while (1) {
         // Lock the connection mutex to ensure only one client connection is processed at a time
         pthread_mutex_lock(&connection_mutex);
 
@@ -464,7 +546,6 @@ int main(int argc, char *argv[]) {
         client_data->client_fd = new_socket;
         client_data->client_addr = address;
 
-        pthread_t client_thread;
         pthread_create(&client_thread, NULL, client_handler, (void *)client_data);
         pthread_detach(client_thread);
     }
@@ -472,13 +553,18 @@ int main(int argc, char *argv[]) {
     // Wait for all threads to finish
     for (int i = 0; i < cook_thread_pool_size; i++) {
         pthread_join(cook_threads[i], NULL);
+        cook_thread_active--;
     }
     for (int i = 0; i < delivery_thread_pool_size; i++) {
         pthread_join(delivery_threads[i], NULL);
+        delivery_thread_active--;
     }
 
     close(server_fd);
     free(deliveries_per_person);
     free(cooks); // Free the allocated memory for cooks
+    free(cook_threads); // Free the allocated memory for cook_threads
+    free(delivery_threads); // Free the allocated memory for delivery_threads
+
     return 0;
 }
