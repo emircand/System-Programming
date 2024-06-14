@@ -83,6 +83,7 @@ pthread_t client_thread;
 
 int cook_thread_active = 0;
 int delivery_thread_active = 0;
+int uid = 0;
 
 // Global variables
 int total_orders_received = 0;
@@ -121,13 +122,8 @@ void log_activity(const char *message, int order_id) {
 // Signal handler for SIGINT
 void handle_sigint(int sig) {
     log_activity("SIGINT received. Shutting down server...", -1);
-    printf(".. Upps quiting.. writing log file..\n");
+    printf(".. Upps quitting.. writing log file..\n");
     print_order_statistics();
-
-    // Send SIGINT signal to the client
-    if (client_pid > 0) {
-        kill(client_pid, SIGINT);
-    }
 
     // Wake up all threads to ensure they can check the termination signal
     pthread_mutex_lock(&shutdown_mutex);
@@ -136,24 +132,9 @@ void handle_sigint(int sig) {
 
     server_running = 0;
 
-    // Wait for all threads to finish
-    for (int i = 0; i < cook_thread_active; i++) {
-        if (cook_threads[i] != NULL) {
-            pthread_join(cook_threads[i], NULL);
-        }
+    if (client_pid != -1) {
+        kill(client_pid, SIGINT);
     }
-
-    free(cook_threads); // Free the allocated memory for cook threads
-
-    for (int i = 0; i < delivery_thread_active; i++) {
-        if (delivery_threads[i] != NULL) {
-            pthread_join(delivery_threads[i], NULL);
-        }
-    }
-
-    free(delivery_threads); // Free the allocated memory for delivery threads
-
-    pthread_join(client_thread, NULL); // Wait for the client thread to finish
 
     // Close the server file descriptor
     if (server_fd >= 0) {
@@ -186,6 +167,24 @@ void handle_sigint(int sig) {
 
     exit(0);
 }
+
+void setup_signal_handlers() {
+    struct sigaction sa;
+    sa.sa_handler = handle_sigint;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(1);
+    }
+
+    if (sigaction(SIGQUIT, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(1);
+    }
+}
+
 
 void enqueue_order(Order **head, Order **tail, Order *new_order) {
     if (*tail) {
@@ -363,7 +362,16 @@ void promote_best_cook(int cook_thread_pool_size) {
     }
 }
 
-// Client handler function
+void empty_best(){
+    // empty cook and delivery arrays
+    for (int i = 0; i < cook_thread_pool_size; i++) {
+        cooks[i].orders_prepared = 0;
+    }
+    for (int i = 0; i < delivery_thread_pool_size; i++) {
+        deliveries_per_person[i] = 0;
+    }
+}
+
 void *client_handler(void *arg) {
     ClientData *client_data = (ClientData *)arg;
     OrderDetails order_details;
@@ -375,9 +383,34 @@ void *client_handler(void *arg) {
             // Log the termination request and close the connection
             log_activity("Received TERMINATE message from client", -1);
             printf("> Order Cancelled by client @%d\n", order_details.pid);
-            server_running = 0;
             close(client_data->client_fd);
             free(client_data);
+
+            // Clean the cook queue
+            pthread_mutex_lock(&cook_queue_mutex);
+            while (cook_queue_head != NULL) {
+                Order *temp = cook_queue_head;
+                cook_queue_head = cook_queue_head->next;
+                free(temp);
+            }
+            cook_queue_tail = NULL;
+            pthread_mutex_unlock(&cook_queue_mutex);
+
+            // Clean the delivery queue
+            pthread_mutex_lock(&delivery_queue_mutex);
+            while (delivery_queue_head != NULL) {
+                Order *temp = delivery_queue_head;
+                delivery_queue_head = delivery_queue_head->next;
+                free(temp);
+            }
+            delivery_queue_tail = NULL;
+            pthread_mutex_unlock(&delivery_queue_mutex);
+
+            empty_best();
+
+            // Unlock the connection mutex to allow new connections
+            pthread_mutex_unlock(&connection_mutex);
+            printf("> PideShop active waiting for connection ...\n");
             return NULL;
         }
         if(order_request == 0) {
@@ -397,11 +430,12 @@ void *client_handler(void *arg) {
         new_order->cooked = 0;
         new_order->delivered = 0;
         new_order->next = NULL;
-        new_order->pid = order_details.pid;
         client_pid = order_details.pid;
+        new_order->pid = order_details.pid;
 
         pthread_mutex_lock(&cook_queue_mutex);
         enqueue_order(&cook_queue_head, &cook_queue_tail, new_order);
+        // free(new_order);
         pthread_cond_signal(&cook_queue_cond);
         pthread_mutex_unlock(&cook_queue_mutex);
     }
@@ -423,6 +457,7 @@ void *client_handler(void *arg) {
         promote_best_delivery_person(delivery_thread_pool_size);
         // At the end of the day, promote the best cook
         promote_best_cook(cook_thread_pool_size);
+        empty_best();
     }
     pthread_mutex_unlock(&cook_queue_mutex);
 
@@ -435,6 +470,8 @@ void *client_handler(void *arg) {
 }
 
 int main(int argc, char *argv[]) {
+    setup_signal_handlers();
+    
     if (argc != 5) {
         fprintf(stderr, "Usage: %s <ip:port> <cook_thread_pool_size> <delivery_thread_pool_size> <delivery_speed>\n", argv[0]);
         exit(1);
@@ -473,9 +510,6 @@ int main(int argc, char *argv[]) {
         free(cook_threads);
         exit(1);
     }
-
-    signal(SIGINT, handle_sigint);
-    signal(SIGQUIT, handle_sigint);
 
     // Initialize semaphores
     sem_init(&oven_apparatus_sem, 0, OVEN_APPARATUS);
