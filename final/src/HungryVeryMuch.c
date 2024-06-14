@@ -12,15 +12,29 @@ typedef struct {
     int location_y;
     int town_size_x;
     int town_size_y;
+    int number_of_orders;
+    pid_t pid;
 } OrderDetails;
 
 pthread_mutex_t delivery_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t delivery_cond = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t order_send_mutex = PTHREAD_MUTEX_INITIALIZER;
 int all_orders_delivered = 0;
+int sock = 0;
+volatile sig_atomic_t stop_requested = 0;
 
 void handle_sigint(int sig) {
     printf(">^C signal .. cancelling orders.. editing log..\n");
+    stop_requested = 1;
+
+    char termination_message[] = "TERMINATE";
+    send(sock, termination_message, sizeof(termination_message), 0);
+
+    pthread_mutex_lock(&order_send_mutex);
+    all_orders_delivered = 1;
+    pthread_cond_signal(&delivery_cond);
+    pthread_mutex_unlock(&order_send_mutex);
+
     exit(0);
 }
 
@@ -60,8 +74,9 @@ int main(int argc, char *argv[]) {
     int town_size_y = atoi(argv[4]);
 
     signal(SIGINT, handle_sigint);
+    signal(SIGQUIT, handle_sigint);
 
-    int sock = 0;
+    sock = 0;
     struct sockaddr_in serv_addr;
 
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -86,17 +101,19 @@ int main(int argc, char *argv[]) {
     pthread_create(&delivery_thread, NULL, wait_for_delivery, &sock);
     pthread_detach(delivery_thread);
 
-    for (int i = 0; i < number_of_clients; i++) {
+    printf("> PID: %d\n", getpid());
+    printf("> Sending %d orders to %s:%d\n", number_of_clients, ip, port);
+
+    for (int i = 0; i < number_of_clients && !stop_requested; i++) {
         OrderDetails order;
         order.client_id = i;
         order.location_x = rand() % town_size_x;
         order.location_y = rand() % town_size_y;
         order.town_size_x = town_size_x;
         order.town_size_y = town_size_y;
-        printf("> Order from client %d at location (%d, %d) with town size (%d, %d)\n", order.client_id, order.location_x, order.location_y, order.town_size_x, order.town_size_y);
-
+        order.number_of_orders = number_of_clients;
+        order.pid = getpid();
         send(sock, &order, sizeof(OrderDetails), 0);
-        sleep(0.3);  // Add delay to simulate real-world time gaps between orders
     }
 
     pthread_mutex_lock(&delivery_mutex);
