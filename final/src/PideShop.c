@@ -22,6 +22,7 @@ typedef struct {
     int town_size_x;
     int town_size_y;
     int number_of_orders;
+    int is_terminated;
     pid_t pid;
 } OrderDetails;
 
@@ -35,9 +36,7 @@ pthread_cond_t oven_cond = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t connection_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t order_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-volatile int server_running = 1; // Global variable to control the server running state
-// Global variable to indicate if a termination signal was received
-volatile sig_atomic_t termination_signal_received = 0;
+volatile sig_atomic_t server_running = 1; // Global variable to control the server running state
 pthread_cond_t shutdown_cond = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t shutdown_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -111,13 +110,16 @@ void log_activity(const char *message, int order_id) {
 // Signal handler for SIGINT
 void handle_sigint(int sig) {
     log_activity("SIGINT received. Shutting down server...", -1);
+    printf(".. Upps quiting.. writing log file..\n");
     print_order_statistics();
-    termination_signal_received = 1;
 
     // Wake up all threads to ensure they can check the termination signal
     pthread_mutex_lock(&shutdown_mutex);
     pthread_cond_broadcast(&shutdown_cond);
     pthread_mutex_unlock(&shutdown_mutex);
+
+    server_running = 0;
+    exit(0);
 }
 
 void enqueue_order(Order **head, Order **tail, Order *new_order) {
@@ -302,13 +304,23 @@ void *client_handler(void *arg) {
     OrderDetails order_details;
     int bytes_read;
 
-    while ((bytes_read = read(client_data->client_fd, &order_details, sizeof(OrderDetails))) > 0) {
-        if (strcmp((char *)&order_details, "TERMINATE") == 0) {
+    int order_request = 0;
+    while ((bytes_read = recv(client_data->client_fd, &order_details, sizeof(OrderDetails), 0)) > 0) {
+        if (order_details.is_terminated == 1) {
             // Log the termination request and close the connection
             log_activity("Received TERMINATE message from client", -1);
+            server_running = 0;
+            printf("> Order Cancelled by client @%d\n", order_details.pid);
             close(client_data->client_fd);
             free(client_data);
             return NULL;
+        }
+        if(order_request == 0) {
+            char message[100];
+            sprintf(message, "%d new customers.. Serving", order_details.number_of_orders);
+            printf("> %s\n", message);
+            log_activity(message, -1);
+            order_request = 1;
         }
 
         total_orders_received++;
@@ -340,6 +352,7 @@ void *client_handler(void *arg) {
     pthread_mutex_lock(&cook_queue_mutex);
     if (!cook_queue_head) {
         printf("> done serving client @%d\n", order_details.pid);
+        order_request = 0;
         // At the end of the day, promote the best delivery person
         promote_best_delivery_person(delivery_thread_pool_size);
         // At the end of the day, promote the best cook
@@ -388,9 +401,16 @@ int main(int argc, char *argv[]) {
     int server_fd, new_socket;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
+    int opt = 1;
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Set the SO_REUSEADDR socket option
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+        perror("setsockopt failed");
         exit(EXIT_FAILURE);
     }
 
@@ -435,10 +455,6 @@ int main(int argc, char *argv[]) {
         pthread_mutex_lock(&connection_mutex);
 
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) {
-            if (termination_signal_received) {
-                pthread_mutex_unlock(&connection_mutex);
-                break;
-            }
             perror("accept failed");
             pthread_mutex_unlock(&connection_mutex);
             continue;

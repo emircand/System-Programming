@@ -13,6 +13,7 @@ typedef struct {
     int town_size_x;
     int town_size_y;
     int number_of_orders;
+    int is_terminated;
     pid_t pid;
 } OrderDetails;
 
@@ -27,8 +28,10 @@ void handle_sigint(int sig) {
     printf(">^C signal .. cancelling orders.. editing log..\n");
     stop_requested = 1;
 
-    char termination_message[] = "TERMINATE";
-    send(sock, termination_message, sizeof(termination_message), 0);
+    OrderDetails termination_message;
+    termination_message.is_terminated = 1;
+    termination_message.pid = getpid();
+    send(sock, &termination_message, sizeof(OrderDetails), 0);
 
     pthread_mutex_lock(&order_send_mutex);
     all_orders_delivered = 1;
